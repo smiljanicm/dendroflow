@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dendroflow"
+version = "0.1.0"
+description = "Open-source, configuration-driven data management tool for monitoring environmental conditions and plant physiology."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [
+    { name = "SmiljanicM" }
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0"
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
