@@ -1,66 +1,22 @@
-# DendroFlow — Data Architecture
+# DendroFlow Data Architecture
 
-**Status:** Architecture baseline
-**Date:** 2026-09-01
+## Purpose
 
-## 1. Purpose
+DendroFlow is an open-source, configuration-driven data management system for environmental and plant sensor monitoring.
 
-This document records the architectural decisions made during DendroFlow development.
+The data architecture separates:
 
-The goal is to establish a stable data model before implementation begins.
+- research and monitoring metadata
+- received source data and ingestion provenance
+- processed, canonical data products
 
-The architecture separates:
-
-1. research and monitoring metadata;
-2. acquired source data and ingestion provenance;
-3. processed and canonical data.
+The architecture is designed to preserve source data, maintain traceable provenance, and allow processed datasets to be reproduced from their inputs and configuration.
 
 ---
 
-## 2. Core architectural principle
+## Database Architecture
 
-DendroFlow follows three conceptual data layers:
-
-```text
-METADATA
-    │
-    ▼
-RAW
-    │
-    ▼
-CLEAN
-```
-
-### Metadata
-
-Describes the physical and scientific monitoring context:
-
-- sites;
-- observation locations;
-- sensors;
-- variables;
-- deployments;
-- related research metadata.
-
-### RAW
-
-Preserves acquired source data and its provenance.
-
-RAW should be as close as practical to the source data and should not apply scientific or quality-control interpretation.
-
-### CLEAN
-
-Contains canonical, processed observations produced from RAW data using defined processing rules.
-
-The fundamental principle is:
-
-> **RAW preserves what was received. CLEAN represents what DendroFlow considers the canonical data product.**
-
----
-
-# 3. Database architecture
-
-DendroFlow will use three separate PostgreSQL databases:
+DendroFlow uses three separate PostgreSQL databases:
 
 ```text
 dendroflow_metadata
@@ -68,46 +24,97 @@ dendroflow_raw
 dendroflow_clean
 ```
 
-## 3.1 Metadata database
+The databases have distinct responsibilities.
 
-The metadata database is intentionally broader than sensor monitoring.
+### METADATA
 
-It represents the research environment and can later support other types of scientific metadata such as:
+Describes what the research and monitoring system is.
 
-- inventory;
-- sampling;
-- genetics;
-- experiments;
-- other research entities.
+Examples include:
 
-The current model is divided conceptually into:
+- sites and locations
+- sensor types and models
+- physical sensors
+- monitored variables
+- sensor deployments
+- broader research metadata that may be added in the future
 
-```text
-dendroflow_metadata
-│
-├── spatial / research context
-│   ├── sites
-│   ├── locations
-│   ├── location_types
-│   └── location_labels
-│
-└── monitoring metadata
-    ├── sensor_types
-    ├── sensor_models
-    ├── sensors
-    ├── variables
-    └── deployments
-```
+### RAW
 
-These remain in one database because the relationships between locations and monitoring entities are tightly coupled and benefit from normal PostgreSQL foreign-key constraints.
+Describes what data was received and how it was ingested.
 
-A future schema-level separation may be introduced if useful, without necessarily splitting the database.
+RAW data is intended to be non-destructive and preserve source provenance.
+
+Examples include:
+
+- source files
+- file-to-deployment interfaces
+- ingestion runs
+- raw observations
+
+### CLEAN
+
+Contains the canonical processed data product produced by DendroFlow.
+
+Potential processing includes:
+
+- unit conversion
+- duplicate resolution
+- quality control
+- outlier handling
+- timestamp correction where appropriate
+- aggregation
+- derived variables
+- processing provenance
+
+The exact CLEAN schema is intentionally deferred until the RAW and metadata layers are implemented.
 
 ---
 
-# 4. Sites
+## Core Data Model
 
-A site represents a geographical or organizational monitoring area.
+A central architectural principle is that the following concepts are distinct:
+
+```text
+physical sensor
+      ↓
+deployment
+      ↓
+file interface
+      ↓
+raw observation
+      ↓
+clean observation
+```
+
+These concepts should not be collapsed into a single entity.
+
+A physical sensor may be deployed multiple times and may provide multiple variables.
+
+A deployment represents a particular combination of:
+
+- physical sensor
+- monitored variable
+- location
+- validity period
+
+A source file may contain data from one or more deployments, and a deployment may be represented in multiple source files.
+
+---
+
+# Metadata Database
+
+Database:
+
+```text
+dendroflow_metadata
+```
+
+The metadata database is intentionally broader than sensor monitoring alone. It may eventually contain information about inventory, sampling, experiments, genetics, and other research context.
+
+## `sites`
+
+Represents sites and hierarchical site groupings.
 
 ```text
 sites
@@ -118,22 +125,27 @@ description
 latitude
 longitude
 parent_id
-short_name
+site_code
 ```
 
-## Decisions
+### Semantics
 
-- Sites may have a parent site.
-- `parent_id` references `sites.site_id`.
-- Existing site hierarchy is retained.
-- GPS is represented by separate latitude and longitude values rather than a PostgreSQL `point`.
-- Site label history is not required.
+- `site_id` is the database identity.
+- `name` is the human-readable site name.
+- `description` provides additional information.
+- `latitude` and `longitude` represent optional site-level coordinates.
+- `parent_id` provides hierarchical relationships between sites.
+- `site_code` is a unique, stable, human-usable site identifier.
+
+`site_code` is intentionally distinct from `site_id`. The former is a semantic identifier; the latter is the database primary key.
+
+Site labels are not versioned. Where historical labels are required for individual monitoring locations, they are represented through `location_labels`.
 
 ---
 
-# 5. Location types
+## `location_types`
 
-Location types describe the functional category of an observation location.
+Defines the controlled vocabulary for location types.
 
 ```text
 location_types
@@ -143,21 +155,28 @@ name
 description
 ```
 
-Examples include:
+Examples may include:
 
 ```text
 tree
-site
-vertical_profile
+stem
+branch
+soil
+air
+tower
+plot
+building
 ```
 
-`name` should be unique.
+`name` is unique.
+
+The separate table provides a controlled vocabulary without hard-coding location types throughout the application.
 
 ---
 
-# 6. Observation locations
+## `locations`
 
-A location represents a physical observation position within a site.
+Represents a monitoring or research location within a site.
 
 ```text
 locations
@@ -171,49 +190,52 @@ height_above_ground
 azimuth
 ```
 
-## Spatial attributes
+A location is deliberately modeled independently from a physical sensor.
 
-### Latitude / longitude
+### Horizontal position
 
-Define the horizontal position of the observation location.
+`latitude` and `longitude` provide optional coordinates for the location.
 
-### Height above ground
+When supplied, both coordinates should be present.
 
-May be positive, zero, or negative.
-
-Examples:
+Valid ranges are:
 
 ```text
-+10.0 m  above ground
- +1.3 m  above ground
-  0.0 m  ground level
- -0.2 m  below ground
+-90 ≤ latitude ≤ 90
+-180 ≤ longitude ≤ 180
 ```
 
-### Azimuth
+### Vertical position
 
-Defines horizontal orientation relative to north.
+`height_above_ground` records vertical position relative to ground level.
+
+It may be:
+
+- negative for below-ground locations
+- zero for ground level
+- positive for above-ground locations
+
+### Orientation
+
+`azimuth` records horizontal orientation in degrees.
+
+Valid values are:
 
 ```text
-0°   North
-90°  East
-180° South
-270° West
+0 ≤ azimuth < 360
 ```
 
-Azimuth is nullable where orientation is not meaningful.
+The value is nullable because orientation is not relevant to every location.
 
-## Design decision
+### Location identity
 
-No separate `tree_id` entity is currently required.
-
-Tree-related observation positions can be represented as locations, with human-facing tree identifiers handled through location labels.
+A location does not require a separate tree identifier. A tree, stem, branch, soil position, or other entity can be represented through the combination of the location and its location type.
 
 ---
 
-# 7. Location labels
+## `location_labels`
 
-Human-facing labels are modeled separately because labels may change over time.
+Stores labels associated with locations and preserves their history.
 
 ```text
 location_labels
@@ -225,28 +247,32 @@ valid_from
 valid_to
 ```
 
-Example:
+A location may have different labels over time.
+
+For example:
 
 ```text
-location_id = 101
+Location 17
 
-2024-01-01 → 2025-05-31   Tree 17
-2025-06-01 → NULL         Tree 23
+2024-01-01 → 2025-07-01   Tree 12
+2025-07-01 → NULL         Tree 18
 ```
 
-The physical location remains the same while its label changes.
+Validity periods should not overlap for the same location.
 
-## Temporal rule
+Validity intervals use half-open semantics:
 
-A location should not have overlapping label validity periods.
+```text
+[valid_from, valid_to)
+```
 
-The exact PostgreSQL constraint will be implemented later.
+This allows one label to end at exactly the instant another label begins without creating an overlap.
 
 ---
 
-# 8. Sensor types
+## `sensor_types`
 
-Sensor types represent functional categories of instruments.
+Defines broad categories of sensors.
 
 ```text
 sensor_types
@@ -256,20 +282,13 @@ short_type
 description
 ```
 
-Examples:
-
-```text
-temperature_humidity
-dendrometer
-soil_moisture
-radiation
-```
+`short_type` identifies the sensor category.
 
 ---
 
-# 9. Sensor models
+## `sensor_models`
 
-Sensor models represent commercially or technically defined instrument models.
+Defines specific sensor models.
 
 ```text
 sensor_models
@@ -281,19 +300,13 @@ sensor_type_id
 description
 ```
 
-Relationship:
-
-```text
-sensor_models.sensor_type_id
-        ↓
-sensor_types.sensor_type_id
-```
+A sensor model belongs to a sensor type.
 
 ---
 
-# 10. Sensors
+## `sensors`
 
-A sensor represents an individual physical instrument.
+Represents a physical sensor.
 
 ```text
 sensors
@@ -304,31 +317,15 @@ serial_number
 description
 ```
 
-Relationship:
+A physical sensor is distinct from its deployments.
 
-```text
-sensor_type
-     ↓
-sensor_model
-     ↓
-physical sensor
-```
-
-The same sensor may be deployed multiple times at different locations and/or periods.
-
-A likely uniqueness constraint is:
-
-```text
-(sensor_model_id, serial_number)
-```
-
-rather than assuming serial numbers are globally unique.
+The same physical sensor may be deployed at different locations or used for different variables over time.
 
 ---
 
-# 11. Variables
+## `variables`
 
-Variables represent the semantic measurement being recorded.
+Defines measured and derived variables.
 
 ```text
 variables
@@ -339,26 +336,19 @@ derived
 description
 ```
 
-## Decisions
+`name` is unique.
 
-- `name` is unique.
-- `derived` distinguishes measured variables from variables produced by processing.
-- Units are **not** stored here.
+`derived` distinguishes variables directly measured by a sensor from variables calculated by DendroFlow.
 
-Examples:
+Units are intentionally **not** stored on the variable.
 
-```text
-Air Temperature
-Relative Humidity
-Stem Diameter
-Soil Temperature
-```
+The same conceptual variable may be represented using different units by different sensors, files, or deployments. Unit information therefore belongs to the source/interface or processed-data context where appropriate.
 
 ---
 
-# 12. Deployments
+## `deployments`
 
-A deployment represents one physical sensor measuring one variable at one observation location during a defined period.
+Represents the use of a physical sensor for a particular variable at a particular location during a validity period.
 
 ```text
 deployments
@@ -371,50 +361,46 @@ valid_from
 valid_to
 ```
 
-This is a central modeling decision.
+A deployment combines:
 
-## Multi-channel sensors
+```text
+sensor + variable + location + validity period
+```
 
-A sensor measuring multiple variables gets multiple deployments.
+A multi-channel sensor can therefore have multiple deployments, effectively one deployment per monitored variable/channel.
 
-Example:
+For example:
 
 ```text
 Sensor 42
-│
-├── Deployment 101 → Air Temperature
-└── Deployment 102 → Relative Humidity
+
+Temperature → Location A → 2025-01-01 → NULL
+Humidity    → Location A → 2025-01-01 → NULL
 ```
 
-This allows individual channels to fail or be replaced independently.
+If the temperature channel fails while humidity continues to operate, the temperature deployment can end independently.
 
-For example, temperature may stop while relative humidity continues.
+The same physical sensor may also have successive deployments at different locations.
 
-## Sensor replacement
-
-A replacement sensor receives a new deployment.
-
-```text
-Sensor 42
-    └── Deployment 101
-        2024 → 2025
-
-Sensor 57
-    └── Deployment 205
-        2025 → ...
-```
-
-## Temporal rule
-
-For a given sensor and variable, deployment periods should not overlap.
-
-The exact PostgreSQL constraint will be implemented later.
+For a given `sensor_id` and `variable_id`, deployment validity periods should not overlap.
 
 ---
 
-# 13. Files
+# RAW Database
 
-A file represents an acquired source-file artifact.
+Database:
+
+```text
+dendroflow_raw
+```
+
+The RAW database preserves received data and ingestion provenance.
+
+RAW data is non-destructive: genuine duplicate rows present in a source file should not be silently removed.
+
+## `files`
+
+Represents a received source file.
 
 ```text
 files
@@ -425,29 +411,39 @@ hash
 timestamp_timezone
 ```
 
-## Decisions
+### File identity
 
-- `filepath` identifies the acquired file path.
-- `hash` is used for content/integrity checking.
-- `last_updated` is not required.
-- File processing state is not stored directly on the file.
-- `timestamp_timezone` describes how timestamps in the file should be interpreted.
+`hash` provides content-based identification of the received file.
 
-Because source files are generally wide:
+`filepath` records the source or storage path.
+
+### Timestamp timezone
+
+`timestamp_timezone` identifies the timezone used to interpret timestamp values contained in the file.
+
+Timezone is intentionally a **file-level property**.
+
+A single deployment may produce multiple files, including files generated by different computers or export workflows. Those files may use different timezones even though they contain data from the same deployment.
+
+For example:
 
 ```text
-timestamp | temperature | RH | dendrometer | ...
+Deployment 42
+
+file_A → Europe/Berlin
+file_B → UTC
+file_C → America/New_York
 ```
 
-the timestamp interpretation belongs to the file rather than each sensor-value interface.
+The deployment therefore does not have to have a single timezone.
 
-For now, timezone metadata remains at file level. A higher-level acquisition/source entity may be introduced later if repeated information becomes significant.
+Named IANA timezones such as `Europe/Berlin` are preferred over fixed UTC offsets because they preserve daylight-saving-time and historical timezone rules.
 
 ---
 
-# 14. Sensor-file interfaces
+## `sensor_file_interfaces`
 
-A sensor-file interface maps a particular source-file column to a deployment.
+Maps a value column in a specific source file to a deployment.
 
 ```text
 sensor_file_interfaces
@@ -460,36 +456,39 @@ timestamp_column
 unit
 ```
 
-An interface represents:
+One interface represents one value column in one file associated with one deployment.
 
-> One value column in one file mapped to one deployment.
-
-Example:
+This allows DendroFlow to handle wide source files such as:
 
 ```text
-timestamp | temp | RH
-              │     │
-              ▼     ▼
-          interface interface
-              │     │
-              ▼     ▼
-        deployment deployment
+timestamp | temp | RH | dendrometer
 ```
 
-## Decisions
+with separate interfaces for each value column.
 
-- `deployment_id` is the semantic link to sensor, location, and variable.
-- Sensor, location, and variable IDs are not redundantly stored here.
-- `unit` belongs to the interface because the same variable may be represented in different units in different files.
-- `timestamp_column` belongs here because files may have different column layouts.
-- `timestamp_timezone` belongs to `files`.
-- A reusable interface/template abstraction is intentionally deferred.
+For example:
+
+```text
+file_001
+   │
+   ├── temp           → deployment 10
+   ├── RH             → deployment 11
+   └── dendrometer    → deployment 12
+```
+
+`unit` belongs to the interface because different source files or readout systems may represent the same variable using different units.
+
+`timestamp_column` belongs to the interface because source layouts may differ.
+
+The interface also provides a provenance path from an observation back to its source file and deployment.
+
+Because the metadata and RAW databases are separate PostgreSQL databases, `deployment_id` is an application-managed reference rather than a PostgreSQL foreign key.
 
 ---
 
-# 15. Ingestion runs
+## `ingestion_runs`
 
-An ingestion run represents one execution of the ingestion process.
+Represents an execution of the ingestion process.
 
 ```text
 ingestion_runs
@@ -500,7 +499,7 @@ finished_at
 status
 ```
 
-Initial statuses may include:
+At minimum, ingestion runs support:
 
 ```text
 running
@@ -508,13 +507,13 @@ completed
 failed
 ```
 
-Additional states may be added later.
+An ingestion run provides execution-level provenance for raw observations.
 
 ---
 
-# 16. Ingestion interfaces
+## `ingestion_interfaces`
 
-Processing progress is tracked at interface level rather than file level.
+Records which interfaces have been successfully processed during an ingestion run.
 
 ```text
 ingestion_interfaces
@@ -526,42 +525,20 @@ interface_id
 The intended primary key is:
 
 ```text
-PRIMARY KEY (ingestion_run_id, interface_id)
+(ingestion_run_id, interface_id)
 ```
 
-The meaning of a row is:
+This supports restartable ingestion.
 
-> The interface was successfully processed during this ingestion run.
+If an ingestion process is interrupted, already-completed interfaces can be skipped when the process resumes.
 
-This enables fine-grained recovery.
-
-Example:
-
-```text
-Ingestion Run 42
-
-Interface 1 → completed
-Interface 2 → completed
-Interface 3 → failed
-Interface 4 → not started
-```
-
-On restart:
-
-```text
-Interface 1 → skip
-Interface 2 → skip
-Interface 3 → retry
-Interface 4 → process
-```
-
-The completion record should be committed transactionally with the corresponding observation insertion.
+The completion record should be committed transactionally with the corresponding observations so that a failed transaction cannot leave a false indication that an interface was successfully processed.
 
 ---
 
-# 17. RAW observations
+## `raw_observations`
 
-RAW observations are currently modeled as:
+Stores observations extracted from source files.
 
 ```text
 raw_observations
@@ -573,350 +550,255 @@ interface_id
 ingestion_run_id
 ```
 
-Through `interface_id`, an observation can be traced to:
+Each observation retains provenance through:
 
 ```text
+raw observation
+      ↓
+interface
+      ↓
 file
+      ↓
 deployment
-sensor
-location
-variable
-source column
-unit
+      ↓
+sensor / location / variable
 ```
 
-Through `ingestion_run_id`, the ingestion execution is known.
+The `ingestion_run_id` additionally records which ingestion execution produced the observation.
 
----
+### Non-destructive principle
 
-# 18. RAW data philosophy
-
-RAW is intentionally non-destructive.
-
-RAW should not perform:
-
-- deduplication;
-- outlier removal;
-- gap filling;
-- unit conversion;
-- quality-control correction;
-- derived-variable calculation.
-
-If the source file contains:
-
-```text
-timestamp   value
-10:00       21.4
-10:00       21.5
-```
-
-both observations are retained.
-
-There is therefore no uniqueness constraint such as:
-
-```text
-UNIQUE(interface_id, timestamp)
-```
-
-that would destroy legitimate source duplicates.
-
----
-
-# 19. Re-ingestion behavior
-
-There is an important distinction between:
-
-### Genuine source duplicates
-
-If the source file itself contains duplicate observations, they are preserved.
-
-Example:
-
-```text
-10:00 | 21.4
-10:00 | 21.4
-```
-
-Both source rows remain represented in RAW.
-
-### Re-ingestion duplicates
-
-If an already-ingested file is encountered again, the same source observation should not create another RAW observation.
-
-The effective duplicate check is based on the source context and observation content:
-
-```text
-file
-+
-variable
-+
-timestamp
-+
-value
-```
-
-The implementation must distinguish these two situations:
-
-```text
-same observation encountered again
-        → skip
-
-duplicate observation genuinely present in source
-        → preserve
-```
-
-The exact database implementation is deferred to RAW ingestion development.
-
----
-
-# 20. CLEAN database
-
-The CLEAN database represents the canonical processed data product.
-
-The detailed CLEAN schema is intentionally not yet defined.
-
-Conceptually:
-
-```text
-RAW
- │
- │ configured processing
- ▼
-CLEAN
-```
-
-CLEAN is responsible for operations such as:
-
-- unit conversion;
-- duplicate resolution;
-- quality-control rules;
-- outlier handling;
-- timestamp correction where appropriate;
-- aggregation;
-- derived variables;
-- other configured transformations.
-
-The guiding distinction is:
-
-```text
-RAW:
-"What did we receive?"
-
-CLEAN:
-"What do we consider the canonical observation?"
-```
-
-CLEAN should be reproducible from appropriate combinations of:
-
-```text
-METADATA
-+
-RAW
-+
-processing configuration
-```
-
----
-
-# 21. Current entity inventory
-
-## Metadata database
-
-```text
-sites
-location_types
-locations
-location_labels
-
-sensor_types
-sensor_models
-sensors
-variables
-deployments
-```
-
-## RAW database
-
-```text
-files
-sensor_file_interfaces
-
-ingestion_runs
-ingestion_interfaces
-
-raw_observations
-```
-
-## CLEAN database
-
-Detailed entities to be designed later.
-
----
-
-# 22. Important constraints
-
-The following constraints are part of the intended model.
-
-## Referential integrity
-
-Foreign keys should be used for relationships within each database.
-
-Because the databases are separate, cross-database references cannot use normal PostgreSQL foreign keys.
+Genuine duplicate rows contained within a source file are preserved.
 
 For example:
 
 ```text
-dendroflow_raw.sensor_file_interfaces.deployment_id
+10:00 | 21.4
+10:00 | 21.4
+```
+
+represents two source rows and should not automatically be reduced to one RAW observation.
+
+However, re-ingesting the same file must not create a second copy of observations that have already been ingested.
+
+Therefore, DendroFlow distinguishes between:
+
+- **genuine duplicates in the source** → preserve
+- **the same source observation encountered again during re-ingestion** → do not insert again
+
+The exact implementation of this distinction is deferred until the RAW ingestion layer is implemented.
+
+---
+
+# CLEAN Database
+
+Database:
+
+```text
+dendroflow_clean
+```
+
+The CLEAN database represents the canonical processed data product.
+
+The exact schema is intentionally deferred.
+
+Potential CLEAN responsibilities include:
+
+- unit normalization
+- duplicate resolution
+- quality control
+- outlier handling
+- timestamp corrections where justified
+- aggregation
+- derived variables
+- processing provenance
+
+CLEAN data should be reproducible from the relevant metadata, RAW data, and processing configuration.
+
+The distinction between RAW and CLEAN is fundamental:
+
+> **RAW preserves what was received. CLEAN represents what DendroFlow considers canonical and usable.**
+
+---
+
+# Timestamp and Timezone Semantics
+
+DendroFlow distinguishes between a timestamp's **source representation** and the **instant in time** it represents.
+
+## Source timestamps
+
+A source file may contain a timestamp without an explicit timezone:
+
+```text
+2026-07-01 10:00
+```
+
+The associated `files.timestamp_timezone` provides the information needed to interpret that timestamp.
+
+For example:
+
+```text
+2026-07-01 10:00 Europe/Berlin
+```
+
+represents:
+
+```text
+2026-07-01 08:00 UTC
+```
+
+The source timezone is retained as file metadata for provenance.
+
+## Normalized timestamps
+
+Once interpreted, timestamps representing actual instants are stored using PostgreSQL `TIMESTAMPTZ`.
+
+This applies to:
+
+- observation timestamps
+- deployment validity periods
+- location-label validity periods
+- ingestion timestamps
+
+`TIMESTAMPTZ` represents an instant in time rather than preserving the original timezone representation.
+
+The original source timezone remains available through the associated file metadata where required for provenance.
+
+## Different source timezones
+
+Different files associated with the same deployment may use different timezones.
+
+For example:
+
+```text
+file_A: 10:00 Europe/Berlin
+file_B: 08:00 UTC
+```
+
+These represent the same instant.
+
+Conversely:
+
+```text
+file_A: 10:00 Europe/Berlin
+file_B: 10:00 UTC
+```
+
+represent different instants.
+
+Timestamp normalization must therefore occur during ingestion using the timezone associated with the source representation.
+
+## Display timezone
+
+The timezone used to display or analyze timestamps is separate from the source timezone.
+
+Stored timestamps represent instants and should not be modified merely to accommodate a user's preferred display timezone.
+
+Applications and analysis tools may display the same instant in an appropriate timezone when required.
+
+---
+
+# Referential Integrity
+
+Foreign keys are used wherever relationships exist within the same PostgreSQL database.
+
+The three databases are intentionally separate, so PostgreSQL foreign keys cannot enforce relationships between them.
+
+For example:
+
+```text
+RAW sensor_file_interfaces.deployment_id
         ↓
-dendroflow_metadata.deployments.deployment_id
+METADATA deployments.deployment_id
 ```
 
-is a cross-database reference and must be maintained as an application-level contract.
+is an application-managed relationship.
 
-## Spatial validation
+Cross-database references should therefore be validated by DendroFlow application logic.
+
+---
+
+# Data Integrity Principles
+
+The database should enforce important invariants wherever practical.
+
+Examples include:
+
+### Coordinates
 
 ```text
--90  ≤ latitude  ≤ 90
+-90 ≤ latitude ≤ 90
 -180 ≤ longitude ≤ 180
-0    ≤ azimuth   < 360
 ```
 
-## Uniqueness
+A coordinate pair must contain either both latitude and longitude or neither.
 
-Likely uniqueness constraints include:
+### Azimuth
 
 ```text
-location_types.name
-variables.name
-files.filepath
-(sensor_model_id, serial_number)
+0 ≤ azimuth < 360
 ```
 
-## Temporal integrity
+### Temporal validity
 
-No overlapping validity periods for:
+Validity periods must have:
 
 ```text
-location labels for the same location
+valid_to > valid_from
 ```
 
-or:
+when an end time is present.
 
-```text
-deployments for the same sensor + variable
-```
+Location labels for the same location must not overlap.
 
-## Ingestion integrity
+Deployments for the same sensor and variable must not have overlapping validity periods.
 
-```text
-(ingestion_run_id, interface_id)
-```
+### Controlled identifiers
 
-must be unique.
+Canonical identifiers such as:
 
-## RAW observations
+- `site_code`
+- variable names
+- location type names
 
-No uniqueness constraint should eliminate genuine source duplicates.
+should have uniqueness constraints where defined by the data model.
 
 ---
 
-# 23. Explicitly deferred decisions
+# Scalability and Performance
 
-The following are intentionally left for later sessions.
+The metadata database is expected to be substantially smaller than the observation databases.
 
-### CLEAN schema
+Nevertheless, the core identifiers use PostgreSQL `BIGINT` identity columns to avoid unnecessarily constraining future deployments of DendroFlow across multiple laboratories, projects, or collaborating institutions.
 
-Exact tables and relationships have not yet been designed.
+Performance optimization is deliberately deferred until actual usage patterns are known.
 
-### Processing configuration
+Potential future considerations include:
 
-The configuration model for cleaning, transformation, and derived variables will be designed later.
+- additional indexes
+- PostgreSQL table partitioning
+- PostGIS
+- retention policies
+- bulk ingestion optimizations
+- storage and archival strategies
 
-### RAW duplicate implementation
-
-The required behavior is defined, but the exact SQL/algorithm is deferred.
-
-### Timestamp implementation details
-
-The architectural decision is:
-
-```text
-timestamp interpretation → file level
-```
-
-The exact PostgreSQL timestamp type and handling of timezone/DST edge cases will be finalized during ingestion implementation.
-
-### Reusable file-interface definitions
-
-Not required in the initial implementation.
-
-### Advanced ingestion logging
-
-Detailed error and logging infrastructure is deferred.
-
-### Performance optimization
-
-Partitioning, specialized indexes, retention policies, and other large-scale optimizations are deferred until actual data characteristics justify them.
-
-### Operational security and production deployment
-
-Users, permissions, backups, production deployment, and retention policies are outside the scope of the initial architecture.
+These should be introduced based on measured requirements rather than assumed scale.
 
 ---
 
-# 24. High-level architecture
+# Architectural Principles
 
-```text
-                         DENDROFLOW
-                              │
-             ┌────────────────┼────────────────┐
-             │                │                │
-             ▼                ▼                ▼
+The current architecture follows several guiding principles:
 
-   ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
-   │    METADATA     │ │      RAW        │ │      CLEAN      │
-   │                 │ │                 │ │                 │
-   │ Sites           │ │ Files           │ │ Canonical       │
-   │ Locations       │ │ Interfaces      │ │ observations    │
-   │ Labels          │ │ Ingestion runs  │ │                 │
-   │ Sensors         │ │ Ingestion state │ │ Derived data    │
-   │ Variables       │ │ RAW observations│ │                 │
-   │ Deployments     │ │                 │ │ Processing      │
-   │                 │ │                 │ │ provenance      │
-   └────────┬────────┘ └────────┬────────┘ └────────┬────────┘
-            │                   │                   │
-            │                   │                   │
-            └─────── context ───┴────── processing ─┘
-```
+1. **Separate metadata, RAW, and CLEAN responsibilities.**
+2. **Preserve received source data rather than destructively modifying it.**
+3. **Maintain provenance from observations back to their source files and ingestion runs.**
+4. **Keep physical sensors separate from deployments.**
+5. **Treat deployments as sensor-variable-location validity periods.**
+6. **Associate source timezone with the file representation, not automatically with the deployment.**
+7. **Normalize timestamps to actual instants while retaining source timezone information for provenance.**
+8. **Use database constraints to enforce important data invariants.**
+9. **Use application-managed references between the three databases.**
+10. **Prefer a simple architecture that can evolve as DendroFlow grows.**
 
----
-
-# 25. Architecture status
-
-DendroFlow architecture is considered **complete at the conceptual level**.
-
-The model intentionally distinguishes:
-
-```text
-physical sensor
-      ≠
-deployment
-      ≠
-file interface
-      ≠
-raw observation
-      ≠
-clean observation
-```
-
-This separation provides:
-
-- clear provenance;
-- support for sensor replacement;
-- support for multi-channel sensors;
-- support for multiple acquisition streams;
-- preservation of source data;
-- reproducible processing;
-- future extensibility beyond sensor monitoring.
-
-The next development phase can therefore focus on implementing the architecture rather than continuing to redesign the core model.
+This document describes the current architectural baseline. Implementation details may evolve as requirements become clearer, but changes to these principles should be deliberate and documented.
