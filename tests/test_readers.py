@@ -53,7 +53,6 @@ def test_csv_reader_reads_toa5_data():
 
     batches = list(reader.read(path))
 
-
     dataframe = batches[0]
 
     assert len(batches) == 1
