@@ -3,6 +3,10 @@ from pathlib import Path
 
 import pandas as pd
 
+from typing import Any
+
+from dendroflow.tabular import TabularReader
+
 class CsvReader:
     """Read CSV-compatible tabular files."""
 
@@ -32,3 +36,14 @@ class CsvReader:
             yield result
         else:
             yield from result
+
+def reader_from_config(config: dict[str, Any]) -> TabularReader:
+    """Create a tabular reader from reader configuration."""
+
+    reader_type = config.get("reader")
+    options = config.get("options", {})
+
+    if reader_type == "csv":
+        return CsvReader(**options)
+
+    raise ValueError(f"Unsupported reader type: {reader_type}")

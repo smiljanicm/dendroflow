@@ -1,6 +1,8 @@
 from pathlib import Path
 
-from dendroflow.readers import CsvReader
+import pytest
+
+from dendroflow.readers import CsvReader, reader_from_config
 
 def test_csv_reader_reads_single_dataframe(tmp_path):
     path = tmp_path / "example.csv"
@@ -65,3 +67,25 @@ def test_csv_reader_reads_toa5_data():
     ]
 
     assert len(dataframe) > 0
+
+def test_reader_from_config():
+    config = {
+        "reader": "csv",
+        "options": {
+            "skiprows": [0, 2, 3],
+        },
+    }
+
+    reader = reader_from_config(config)
+
+    assert isinstance(reader, CsvReader)
+    assert reader.skiprows == [0, 2, 3]
+
+def test_reader_from_config_rejects_unknown_reader():
+    config = {
+        "reader": "unknown",
+        "options": {},
+    }
+
+    with pytest.raises(ValueError, match="Unsupported reader type"):
+        reader_from_config(config)
