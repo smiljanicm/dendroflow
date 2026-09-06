@@ -19,7 +19,6 @@ class SourceFile:
     timestamp_format: str
     reader_config: dict[str, Any]
 
-
 def get_source_file(file_id: int) -> SourceFile:
     """Load a source-file definition from the RAW database."""
 
@@ -58,3 +57,47 @@ def read_source_file(file_id: int) -> Iterator[pd.DataFrame]:
     reader = reader_from_config(source_file.reader_config)
 
     yield from reader.read(source_file.filepath)
+
+@dataclass(frozen=True)
+class SourceInterface:
+    """Represent one measurement interface registered for a source file."""
+
+    interface_id: int
+    file_id: int
+    deployment_id: int
+    values_column: str
+    timestamp_column: str
+    unit: str | None
+
+
+def get_source_interfaces(file_id: int) -> tuple[SourceInterface, ...]:
+    """Load measurement interfaces registered for a source file."""
+
+    with connect("dendroflow_raw") as connection:
+        rows = connection.execute(
+            """
+            SELECT
+                interface_id,
+                file_id,
+                deployment_id,
+                values_column,
+                timestamp_column,
+                unit
+            FROM sensor_file_interfaces
+            WHERE file_id = %s
+            ORDER BY interface_id
+            """,
+            (file_id,),
+        ).fetchall()
+
+    return tuple(
+        SourceInterface(
+            interface_id=row[0],
+            file_id=row[1],
+            deployment_id=row[2],
+            values_column=row[3],
+            timestamp_column=row[4],
+            unit=row[5],
+        )
+        for row in rows
+    )

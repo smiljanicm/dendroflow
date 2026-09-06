@@ -1,5 +1,7 @@
 from dendroflow.ingestion import (
     SourceFile,
+    SourceInterface,
+    get_source_interfaces,
     read_source_file,
 )
 
@@ -48,3 +50,57 @@ def test_read_source_file_uses_registered_reader_config(
 
     assert len(dataframe) == 2
     assert dataframe.iloc[0]["value"] == 10.5
+
+def test_get_source_interfaces(monkeypatch):
+    class FakeResult:
+        def fetchall(self):
+            return [
+                (
+                    1,
+                    7,
+                    101,
+                    "Lvl_cm_Avg",
+                    "TIMESTAMP",
+                    "cm",
+                ),
+                (
+                    2,
+                    7,
+                    102,
+                    "Temp_C_Avg",
+                    "TIMESTAMP",
+                    "deg C",
+                ),
+            ]
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            pass
+
+        def execute(self, query, parameters):
+            assert parameters == (7,)
+            return FakeResult()
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.connect",
+        lambda database: FakeConnection(),
+    )
+
+    interfaces = get_source_interfaces(7)
+
+    assert len(interfaces) == 2
+
+    assert interfaces[0] == SourceInterface(
+        interface_id=1,
+        file_id=7,
+        deployment_id=101,
+        values_column="Lvl_cm_Avg",
+        timestamp_column="TIMESTAMP",
+        unit="cm",
+    )
+
+    assert interfaces[1].values_column == "Temp_C_Avg"
+    assert interfaces[1].deployment_id == 102
