@@ -7,7 +7,9 @@ import pandas as pd
 
 from dendroflow.database import connect
 from dendroflow.readers import reader_from_config
+from dendroflow.tabular import TabularBatch
 
+from datetime import datetime
 
 @dataclass(frozen=True)
 class SourceFile:
@@ -49,7 +51,7 @@ def get_source_file(file_id: int) -> SourceFile:
     )
 
 
-def read_source_file(file_id: int) -> Iterator[pd.DataFrame]:
+def read_source_file(file_id: int) -> Iterator[TabularBatch]:
     """Read a registered source file using its database configuration."""
 
     source_file = get_source_file(file_id)
@@ -101,3 +103,51 @@ def get_source_interfaces(file_id: int) -> tuple[SourceInterface, ...]:
         )
         for row in rows
     )
+
+@dataclass(frozen=True)
+class Deployment:
+    """Represent deployment metadata needed during ingestion."""
+
+    deployment_id: int
+    sensor_id: int
+    location_id: int
+    variable_id: int
+    valid_from: datetime
+    valid_to: datetime
+
+
+def get_deployments(
+    deployment_ids: tuple[int, ...],
+) -> dict[int, Deployment]:
+    """Load deployments needed for ingestion."""
+
+    if not deployment_ids:
+        return {}
+
+    with connect("dendroflow_metadata") as connection:
+        rows = connection.execute(
+            """
+            SELECT
+                deployment_id,
+                sensor_id,
+                location_id,
+                variable_id,
+                valid_from,
+                valid_to
+            FROM deployments
+            WHERE deployment_id = ANY(%s)
+            """,
+            (list(deployment_ids),),
+        ).fetchall()
+
+    return {
+        row[0]: Deployment(
+            deployment_id=row[0],
+            sensor_id=row[1],
+            location_id=row[2],
+            variable_id=row[3],
+            valid_from=row[4],
+            valid_to=row[5],
+        )
+        for row in rows
+    }

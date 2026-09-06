@@ -1,10 +1,13 @@
+from datetime import datetime, timezone
+
 from dendroflow.ingestion import (
+    Deployment,
     SourceFile,
     SourceInterface,
+    get_deployments,
     get_source_interfaces,
     read_source_file,
 )
-
 
 def test_read_source_file_uses_registered_reader_config(
     tmp_path,
@@ -41,7 +44,9 @@ def test_read_source_file_uses_registered_reader_config(
 
     assert len(batches) == 1
 
-    dataframe = batches[0]
+
+    batch = batches[0]
+    dataframe = batch.dataframe
 
     assert list(dataframe.columns) == [
         "timestamp",
@@ -50,6 +55,7 @@ def test_read_source_file_uses_registered_reader_config(
 
     assert len(dataframe) == 2
     assert dataframe.iloc[0]["value"] == 10.5
+    assert batch.source_line_numbers == (3, 4)
 
 def test_get_source_interfaces(monkeypatch):
     class FakeResult:
@@ -104,3 +110,62 @@ def test_get_source_interfaces(monkeypatch):
 
     assert interfaces[1].values_column == "Temp_C_Avg"
     assert interfaces[1].deployment_id == 102
+
+def test_get_deployments(monkeypatch):
+    valid_from = datetime(
+        2026, 1, 1,
+        tzinfo=timezone.utc,
+    )
+
+    class FakeResult:
+        def fetchall(self):
+            return [
+                (
+                    101,
+                    5,
+                    10,
+                    20,
+                    valid_from,
+                    None,
+                ),
+                (
+                    102,
+                    6,
+                    11,
+                    21,
+                    valid_from,
+                    None,
+                ),
+            ]
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            pass
+
+        def execute(self, query, parameters):
+            assert parameters == ([101, 102],)
+            return FakeResult()
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.connect",
+        lambda database: FakeConnection(),
+    )
+
+    deployments = get_deployments((101, 102))
+
+    assert len(deployments) == 2
+
+    assert deployments[101] == Deployment(
+        deployment_id=101,
+        sensor_id=5,
+        location_id=10,
+        variable_id=20,
+        valid_from=valid_from,
+        valid_to=None,
+    )
+
+    assert deployments[102].location_id == 11
+    assert deployments[102].variable_id == 21

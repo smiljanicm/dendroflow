@@ -1,29 +1,63 @@
 from collections.abc import Iterator
+from itertools import islice
 from pathlib import Path
 
 import pandas as pd
 
 from typing import Any
 
-from dendroflow.tabular import TabularReader
+from dendroflow.tabular import TabularBatch, TabularReader
 
 class CsvReader:
-    """Read CSV-compatible tabular files."""
+    """Read CSV-compatible tabular files with physical line provenance."""
 
     def __init__(
         self,
         *,
-        header: int = 0,
-        skiprows: int | None = None,
+        header: int | None = 0,
+        skiprows: int | list[int] | None = None,
         chunksize: int | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         self.header = header
         self.skiprows = skiprows
         self.chunksize = chunksize
         self.kwargs = kwargs
 
-    def read(self, path: Path) -> Iterator[pd.DataFrame]:
+    def _iter_data_line_numbers(self, path: Path) -> Iterator[int]:
+        """Yield 1-based physical line numbers for parsed data rows."""
+
+        if self.skiprows is None:
+            skipped_rows: set[int] = set()
+        elif isinstance(self.skiprows, int):
+            skipped_rows = set(range(self.skiprows))
+        else:
+            skipped_rows = set(self.skiprows)
+
+        skip_blank_lines = self.kwargs.get("skip_blank_lines", True)
+        encoding = self.kwargs.get("encoding", "utf-8")
+
+        candidate_lines: list[int] = []
+
+        with path.open("r", encoding=encoding) as file:
+            for zero_based_index, line in enumerate(file):
+                if zero_based_index in skipped_rows:
+                    continue
+
+                if skip_blank_lines and not line.strip():
+                    continue
+
+                candidate_lines.append(zero_based_index + 1)
+
+        if self.header is None:
+            yield from candidate_lines
+            return
+
+        yield from candidate_lines[self.header + 1 :]
+
+    def read(self, path: Path) -> Iterator[TabularBatch]:
+        line_numbers = iter(self._iter_data_line_numbers(path))
+
         result = pd.read_csv(
             path,
             header=self.header,
@@ -33,9 +67,27 @@ class CsvReader:
         )
 
         if self.chunksize is None:
-            yield result
-        else:
-            yield from result
+            dataframe = result
+
+            source_lines = tuple(
+                islice(line_numbers, len(dataframe))
+            )
+
+            yield TabularBatch(
+                dataframe=dataframe,
+                source_line_numbers=source_lines,
+            )
+            return
+
+        for dataframe in result:
+            source_lines = tuple(
+                islice(line_numbers, len(dataframe))
+            )
+
+            yield TabularBatch(
+                dataframe=dataframe,
+                source_line_numbers=source_lines,
+            )
 
 def reader_from_config(config: dict[str, Any]) -> TabularReader:
     """Create a tabular reader from reader configuration."""

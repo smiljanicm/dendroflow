@@ -19,11 +19,12 @@ def test_csv_reader_reads_single_dataframe(tmp_path):
 
     assert len(batches) == 1
 
-    dataframe = batches[0]
+    dataframe = batches[0].dataframe
 
     assert list(dataframe.columns) == ["timestamp", "temperature"]
     assert len(dataframe) == 2
     assert dataframe.iloc[0]["temperature"] == 10.5
+    assert batches[0].source_line_numbers == (2,3)
 
 def test_csv_reader_reads_chunks(tmp_path):
     path = tmp_path / "example.csv"
@@ -42,7 +43,11 @@ def test_csv_reader_reads_chunks(tmp_path):
     batches = list(reader.read(path))
 
     assert len(batches) == 3
-    assert [len(batch) for batch in batches] == [2, 2, 1]
+    assert [len(batch.dataframe) for batch in batches] == [2, 2, 1]
+
+    assert batches[0].source_line_numbers == (2, 3)
+    assert batches[1].source_line_numbers == (4, 5)
+    assert batches[2].source_line_numbers == (6,)
 
 DATA_DIR = Path(__file__).parent / "data"
 
@@ -55,7 +60,7 @@ def test_csv_reader_reads_toa5_data():
 
     batches = list(reader.read(path))
 
-    dataframe = batches[0]
+    dataframe = batches[0].dataframe
 
     assert len(batches) == 1
 
@@ -89,3 +94,29 @@ def test_reader_from_config_rejects_unknown_reader():
 
     with pytest.raises(ValueError, match="Unsupported reader type"):
         reader_from_config(config)
+
+def test_csv_reader_reads_toa5_data():
+    path = DATA_DIR / "Sandhagen_Rewetted_WaterTbl.dat"
+
+    reader = CsvReader(
+        skiprows=[0, 2, 3],
+    )
+
+    batches = list(reader.read(path))
+
+    assert len(batches) == 1
+
+    batch = batches[0]
+    dataframe = batch.dataframe
+
+    assert list(dataframe.columns) == [
+        "TIMESTAMP",
+        "RECORD",
+        "Lvl_cm_Avg",
+        "Temp_C_Avg",
+    ]
+
+    assert len(dataframe) > 0
+
+    assert batch.source_line_numbers[0] == 5
+    assert batch.source_line_numbers[1] == 6
