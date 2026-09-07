@@ -816,3 +816,102 @@ def finalize_ingestion_run(
         finished_at=row[2],
         status=row[3],
     )
+
+def ingest_file(
+    file_id: int,
+    *,
+    max_attempts: int = 3,
+) -> IngestionRun:
+    """Ingest one registered source file into RAW."""
+
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be at least 1")
+
+    source_file = get_source_file(file_id)
+
+    fingerprint = fingerprint_file(source_file.filepath)
+
+    file_version = get_or_create_file_version(
+        file_id,
+        fingerprint,
+    )
+
+    interfaces = get_source_interfaces(file_id)
+
+    if not interfaces:
+        raise ValueError(
+            f"No source interfaces registered for file_id={file_id}"
+        )
+
+    deployment_ids = tuple(
+        interface.deployment_id
+        for interface in interfaces
+    )
+
+    deployments = get_deployments(deployment_ids)
+
+    run = create_ingestion_run()
+
+    try:
+        batch_number = 0
+
+        for tabular_batch in read_source_file(file_id):
+            if len(tabular_batch.dataframe) == 0:
+                continue
+
+            batch_number += 1
+
+            ingestion_batch = create_ingestion_batch(
+                ingestion_run_id=run.ingestion_run_id,
+                file_version_id=file_version.file_version_id,
+                batch_number=batch_number,
+                source_line_start=tabular_batch.source_line_numbers[0],
+                source_line_end=tabular_batch.source_line_numbers[-1],
+                row_count=len(tabular_batch.dataframe),
+            )
+
+            while ingestion_batch.attempt_count < max_attempts:
+                ingestion_batch = start_ingestion_batch(
+                    ingestion_batch.ingestion_batch_id
+                )
+
+                try:
+                    observations = normalize_batch(
+                        tabular_batch,
+                        source_file,
+                        interfaces,
+                        deployments,
+                    )
+
+                    ingestion_batch = write_ingestion_batch(
+                        ingestion_batch,
+                        observations,
+                    )
+
+                    break
+
+                except Exception as error:
+                    ingestion_batch = fail_ingestion_batch(
+                        ingestion_batch.ingestion_batch_id,
+                        f"{type(error).__name__}: {error}",
+                    )
+
+                    if ingestion_batch.attempt_count >= max_attempts:
+                        raise
+
+        return finalize_ingestion_run(
+            ingestion_run_id=run.ingestion_run_id,
+            file_version_id=file_version.file_version_id,
+            interfaces=interfaces,
+        )
+
+    except Exception:
+        try:
+            finish_ingestion_run(
+                run.ingestion_run_id,
+                "failed",
+            )
+        except ValueError:
+            pass
+
+        raise
