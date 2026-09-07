@@ -9,11 +9,9 @@ import pytest
 from dendroflow.tabular import TabularBatch
 
 from dendroflow.ingestion import (
+    finalize_ingestion_run,
     insert_raw_observations,
     write_ingestion_batch,
-)
-
-from dendroflow.ingestion import (
     IngestionBatch,
     complete_ingestion_batch,
     create_ingestion_batch,
@@ -937,4 +935,190 @@ def test_write_ingestion_batch_rejects_non_running_batch():
             batch,
             (observation,),
         )
-    
+
+def test_finalize_ingestion_run(monkeypatch):
+    started_at = datetime(
+        2026,
+        9,
+        7,
+        12,
+        0,
+        tzinfo=timezone.utc,
+    )
+
+    finished_at = datetime(
+        2026,
+        9,
+        7,
+        12,
+        5,
+        tzinfo=timezone.utc,
+    )
+
+    interfaces = (
+        SourceInterface(
+            interface_id=1,
+            file_id=1,
+            deployment_id=101,
+            values_column="temperature",
+            timestamp_column="TIMESTAMP",
+            unit="deg C",
+        ),
+        SourceInterface(
+            interface_id=2,
+            file_id=1,
+            deployment_id=102,
+            values_column="water_level",
+            timestamp_column="TIMESTAMP",
+            unit="cm",
+        ),
+    )
+
+    class BatchCountResult:
+        def fetchone(self):
+            return (3, 0)
+
+    class RunResult:
+        def fetchone(self):
+            return (
+                7,
+                started_at,
+                finished_at,
+                "completed",
+            )
+
+    class FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            pass
+
+        def executemany(self, query, rows):
+            assert rows == [
+                (7, 3, 1),
+                (7, 3, 2),
+            ]
+
+    class FakeConnection:
+        def __init__(self):
+            self.execute_count = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            pass
+
+        def cursor(self):
+            return FakeCursor()
+
+        def execute(self, query, parameters):
+            self.execute_count += 1
+
+            if self.execute_count == 1:
+                assert parameters == (7,)
+                return BatchCountResult()
+
+            assert parameters == (7,)
+            return RunResult()
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.connect",
+        lambda database: FakeConnection(),
+    )
+
+    run = finalize_ingestion_run(
+        ingestion_run_id=7,
+        file_version_id=3,
+        interfaces=interfaces,
+    )
+
+    assert run.status == "completed"
+    assert run.finished_at == finished_at
+
+def test_finalize_ingestion_run_rejects_incomplete_batches(
+    monkeypatch,
+):
+    interface = SourceInterface(
+        interface_id=1,
+        file_id=1,
+        deployment_id=101,
+        values_column="temperature",
+        timestamp_column="TIMESTAMP",
+        unit="deg C",
+    )
+
+    class BatchCountResult:
+        def fetchone(self):
+            return (
+                3,  # total
+                1,  # incomplete
+            )
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            pass
+
+        def execute(self, query, parameters):
+            return BatchCountResult()
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.connect",
+        lambda database: FakeConnection(),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="incomplete batches",
+    ):
+        finalize_ingestion_run(
+            ingestion_run_id=7,
+            file_version_id=3,
+            interfaces=(interface,),
+        )
+
+def test_finalize_ingestion_run_rejects_run_without_batches(
+    monkeypatch,
+):
+    interface = SourceInterface(
+        interface_id=1,
+        file_id=1,
+        deployment_id=101,
+        values_column="temperature",
+        timestamp_column="TIMESTAMP",
+        unit="deg C",
+    )
+
+    class BatchCountResult:
+        def fetchone(self):
+            return (0, 0)
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            pass
+
+        def execute(self, query, parameters):
+            return BatchCountResult()
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.connect",
+        lambda database: FakeConnection(),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="has no batches",
+    ):
+        finalize_ingestion_run(
+            ingestion_run_id=7,
+            file_version_id=3,
+            interfaces=(interface,),
+        )
+

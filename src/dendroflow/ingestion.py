@@ -728,3 +728,91 @@ def write_ingestion_batch(
 
     return completed_batch
 
+def finalize_ingestion_run(
+    ingestion_run_id: int,
+    file_version_id: int,
+    interfaces: tuple[SourceInterface, ...],
+) -> IngestionRun:
+    """Finalize a successful ingestion atomically."""
+
+    if not interfaces:
+        raise ValueError(
+            "Cannot finalize ingestion without source interfaces"
+        )
+
+    with connect("dendroflow_raw") as connection:
+        batch_counts = connection.execute(
+            """
+            SELECT
+                COUNT(*) AS total_batches,
+                COUNT(*) FILTER (
+                    WHERE status <> 'completed'
+                ) AS incomplete_batches
+            FROM ingestion_batches
+            WHERE ingestion_run_id = %s
+            """,
+            (ingestion_run_id,),
+        ).fetchone()
+
+        if batch_counts is None or batch_counts[0] == 0:
+            raise ValueError(
+                f"Ingestion run has no batches: {ingestion_run_id}"
+            )
+
+        if batch_counts[1] != 0:
+            raise ValueError(
+                f"Ingestion run has incomplete batches: "
+                f"{ingestion_run_id}"
+            )
+
+        rows = [
+            (
+                ingestion_run_id,
+                file_version_id,
+                interface.interface_id,
+            )
+            for interface in interfaces
+        ]
+
+        with connection.cursor() as cursor:
+            cursor.executemany(
+                """
+                INSERT INTO ingestion_interfaces (
+                    ingestion_run_id,
+                    file_version_id,
+                    interface_id
+                )
+                VALUES (%s, %s, %s)
+                """,
+                rows,
+            )
+
+        row = connection.execute(
+            """
+            UPDATE ingestion_runs
+            SET
+                finished_at = CURRENT_TIMESTAMP,
+                status = 'completed'
+            WHERE ingestion_run_id = %s
+              AND status = 'running'
+            RETURNING
+                ingestion_run_id,
+                started_at,
+                finished_at,
+                status
+            """,
+            (ingestion_run_id,),
+        ).fetchone()
+
+        if row is None:
+            raise ValueError(
+                "Unknown or non-running ingestion run: "
+                f"{ingestion_run_id}"
+            )
+
+    return IngestionRun(
+        ingestion_run_id=row[0],
+        started_at=row[1],
+        finished_at=row[2],
+        status=row[3],
+    )
