@@ -4,10 +4,19 @@ from pathlib import Path
 
 import pandas as pd
 import hashlib
+import pytest
 
 from dendroflow.tabular import TabularBatch
 
 from dendroflow.ingestion import (
+    IngestionBatch,
+    complete_ingestion_batch,
+    create_ingestion_batch,
+    fail_ingestion_batch,
+    start_ingestion_batch,
+    IngestionRun,
+    create_ingestion_run,
+    finish_ingestion_run,
     Deployment,
     NormalizedObservation,
     SourceFile,
@@ -406,3 +415,330 @@ def test_get_or_create_file_version_creates_new_version(monkeypatch):
 
     assert version.file_version_id == 8
     assert version.file_hash == "sha256:newhash"
+
+def test_create_ingestion_run(monkeypatch):
+    started_at = datetime(
+        2026,
+        9,
+        6,
+        18,
+        30,
+        tzinfo=timezone.utc,
+    )
+
+    class FakeResult:
+        def fetchone(self):
+            return (
+                7,
+                started_at,
+                None,
+                "running",
+            )
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            pass
+
+        def execute(self, query):
+            return FakeResult()
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.connect",
+        lambda database: FakeConnection(),
+    )
+
+    run = create_ingestion_run()
+
+    assert run == IngestionRun(
+        ingestion_run_id=7,
+        started_at=started_at,
+        finished_at=None,
+        status="running",
+    )
+
+def test_finish_ingestion_run(monkeypatch):
+    started_at = datetime(
+        2026,
+        9,
+        6,
+        18,
+        30,
+        tzinfo=timezone.utc,
+    )
+
+    finished_at = datetime(
+        2026,
+        9,
+        6,
+        18,
+        31,
+        tzinfo=timezone.utc,
+    )
+
+    class FakeResult:
+        def fetchone(self):
+            return (
+                7,
+                started_at,
+                finished_at,
+                "completed",
+            )
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            pass
+
+        def execute(self, query, parameters):
+            assert parameters == (
+                "completed",
+                7,
+            )
+
+            return FakeResult()
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.connect",
+        lambda database: FakeConnection(),
+    )
+
+    run = finish_ingestion_run(
+        7,
+        "completed",
+    )
+
+    assert run.status == "completed"
+    assert run.finished_at == finished_at
+
+def test_finish_ingestion_run_rejects_running_status():
+    with pytest.raises(ValueError):
+        finish_ingestion_run(1, "running")
+
+def test_create_ingestion_batch(monkeypatch):
+    class FakeResult:
+        def fetchone(self):
+            return (
+                1,      # ingestion_batch_id
+                7,      # ingestion_run_id
+                3,      # file_version_id
+                1,      # batch_number
+                5,      # source_line_start
+                104,    # source_line_end
+                100,    # row_count
+                "pending",
+                0,      # attempt_count
+                None,   # started_at
+                None,   # finished_at
+                None,   # error_message
+            )
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            pass
+
+        def execute(self, query, parameters):
+            assert parameters == (
+                7,
+                3,
+                1,
+                5,
+                104,
+                100,
+            )
+            return FakeResult()
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.connect",
+        lambda database: FakeConnection(),
+    )
+
+    batch = create_ingestion_batch(
+        ingestion_run_id=7,
+        file_version_id=3,
+        batch_number=1,
+        source_line_start=5,
+        source_line_end=104,
+        row_count=100,
+    )
+
+    assert batch.status == "pending"
+    assert batch.attempt_count == 0
+    assert batch.source_line_start == 5
+    assert batch.source_line_end == 104
+    assert batch.row_count == 100
+
+def test_start_ingestion_batch(monkeypatch):
+    started_at = datetime(
+        2026,
+        9,
+        7,
+        12,
+        0,
+        tzinfo=timezone.utc,
+    )
+
+    class FakeResult:
+        def fetchone(self):
+            return (
+                1,
+                7,
+                3,
+                1,
+                5,
+                104,
+                100,
+                "running",
+                1,
+                started_at,
+                None,
+                None,
+            )
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            pass
+
+        def execute(self, query, parameters):
+            assert parameters == (1,)
+            return FakeResult()
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.connect",
+        lambda database: FakeConnection(),
+    )
+
+    batch = start_ingestion_batch(1)
+
+    assert batch.status == "running"
+    assert batch.attempt_count == 1
+    assert batch.started_at == started_at
+    assert batch.finished_at is None
+
+def test_fail_ingestion_batch(monkeypatch):
+    started_at = datetime(
+        2026,
+        9,
+        7,
+        12,
+        0,
+        tzinfo=timezone.utc,
+    )
+
+    finished_at = datetime(
+        2026,
+        9,
+        7,
+        12,
+        1,
+        tzinfo=timezone.utc,
+    )
+
+    class FakeResult:
+        def fetchone(self):
+            return (
+                1,
+                7,
+                3,
+                1,
+                5,
+                104,
+                100,
+                "failed",
+                1,
+                started_at,
+                finished_at,
+                "Database connection lost",
+            )
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            pass
+
+        def execute(self, query, parameters):
+            assert parameters == (
+                "Database connection lost",
+                1,
+            )
+            return FakeResult()
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.connect",
+        lambda database: FakeConnection(),
+    )
+
+    batch = fail_ingestion_batch(
+        1,
+        "Database connection lost",
+    )
+
+    assert batch.status == "failed"
+    assert batch.attempt_count == 1
+    assert batch.finished_at == finished_at
+    assert batch.error_message == "Database connection lost"
+
+def test_complete_ingestion_batch():
+    started_at = datetime(
+        2026,
+        9,
+        7,
+        12,
+        0,
+        tzinfo=timezone.utc,
+    )
+
+    finished_at = datetime(
+        2026,
+        9,
+        7,
+        12,
+        1,
+        tzinfo=timezone.utc,
+    )
+
+    class FakeResult:
+        def fetchone(self):
+            return (
+                1,
+                7,
+                3,
+                1,
+                5,
+                104,
+                100,
+                "completed",
+                1,
+                started_at,
+                finished_at,
+                None,
+            )
+
+    class FakeConnection:
+        def execute(self, query, parameters):
+            assert parameters == (1,)
+            return FakeResult()
+
+    connection = FakeConnection()
+
+    batch = complete_ingestion_batch(
+        connection,
+        1,
+    )
+
+    assert batch.status == "completed"
+    assert batch.attempt_count == 1
+    assert batch.finished_at == finished_at
+    assert batch.error_message is None

@@ -348,3 +348,303 @@ def get_or_create_file_version(
         file_hash=row[2],
         file_size=row[3],
     )
+
+@dataclass(frozen=True)
+class IngestionRun:
+    """Represent one DendroFlow ingestion execution."""
+
+    ingestion_run_id: int
+    started_at: datetime
+    finished_at: datetime | None
+    status: str
+
+
+def create_ingestion_run() -> IngestionRun:
+    """Create a new running ingestion run."""
+
+    with connect("dendroflow_raw") as connection:
+        row = connection.execute(
+            """
+            INSERT INTO ingestion_runs (
+                started_at,
+                status
+            )
+            VALUES (
+                CURRENT_TIMESTAMP,
+                'running'
+            )
+            RETURNING
+                ingestion_run_id,
+                started_at,
+                finished_at,
+                status
+            """
+        ).fetchone()
+
+    if row is None:
+        raise RuntimeError("Could not create ingestion run")
+
+    return IngestionRun(
+        ingestion_run_id=row[0],
+        started_at=row[1],
+        finished_at=row[2],
+        status=row[3],
+    )
+
+
+def finish_ingestion_run(
+    ingestion_run_id: int,
+    status: str,
+) -> IngestionRun:
+    """Finish a running ingestion run."""
+
+    if status not in {"completed", "failed"}:
+        raise ValueError(
+            "Finished ingestion status must be "
+            "'completed' or 'failed'"
+        )
+
+    with connect("dendroflow_raw") as connection:
+        row = connection.execute(
+            """
+            UPDATE ingestion_runs
+            SET
+                finished_at = CURRENT_TIMESTAMP,
+                status = %s
+            WHERE ingestion_run_id = %s
+              AND status = 'running'
+            RETURNING
+                ingestion_run_id,
+                started_at,
+                finished_at,
+                status
+            """,
+            (
+                status,
+                ingestion_run_id,
+            ),
+        ).fetchone()
+
+    if row is None:
+        raise ValueError(
+            f"Unknown or non-running ingestion run: "
+            f"{ingestion_run_id}"
+        )
+
+    return IngestionRun(
+        ingestion_run_id=row[0],
+        started_at=row[1],
+        finished_at=row[2],
+        status=row[3],
+    )
+
+@dataclass(frozen=True)
+class IngestionBatch:
+    """Represent one checkpointed ingestion batch."""
+
+    ingestion_batch_id: int
+    ingestion_run_id: int
+    file_version_id: int
+    batch_number: int
+    source_line_start: int
+    source_line_end: int
+    row_count: int
+    status: str
+    attempt_count: int
+    started_at: datetime | None
+    finished_at: datetime | None
+    error_message: str | None
+
+def _ingestion_batch_from_row(row) -> IngestionBatch:
+    return IngestionBatch(
+        ingestion_batch_id=row[0],
+        ingestion_run_id=row[1],
+        file_version_id=row[2],
+        batch_number=row[3],
+        source_line_start=row[4],
+        source_line_end=row[5],
+        row_count=row[6],
+        status=row[7],
+        attempt_count=row[8],
+        started_at=row[9],
+        finished_at=row[10],
+        error_message=row[11],
+    )
+
+def create_ingestion_batch(
+    ingestion_run_id: int,
+    file_version_id: int,
+    batch_number: int,
+    source_line_start: int,
+    source_line_end: int,
+    row_count: int,
+) -> IngestionBatch:
+    """Create a pending ingestion batch."""
+
+    with connect("dendroflow_raw") as connection:
+        row = connection.execute(
+            """
+            INSERT INTO ingestion_batches (
+                ingestion_run_id,
+                file_version_id,
+                batch_number,
+                source_line_start,
+                source_line_end,
+                row_count
+            )
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING
+                ingestion_batch_id,
+                ingestion_run_id,
+                file_version_id,
+                batch_number,
+                source_line_start,
+                source_line_end,
+                row_count,
+                status,
+                attempt_count,
+                started_at,
+                finished_at,
+                error_message
+            """,
+            (
+                ingestion_run_id,
+                file_version_id,
+                batch_number,
+                source_line_start,
+                source_line_end,
+                row_count,
+            ),
+        ).fetchone()
+
+    if row is None:
+        raise RuntimeError("Could not create ingestion batch")
+
+    return _ingestion_batch_from_row(row)
+
+def start_ingestion_batch(
+    ingestion_batch_id: int,
+) -> IngestionBatch:
+    """Start or retry an ingestion batch."""
+
+    with connect("dendroflow_raw") as connection:
+        row = connection.execute(
+            """
+            UPDATE ingestion_batches
+            SET
+                status = 'running',
+                attempt_count = attempt_count + 1,
+                started_at = CURRENT_TIMESTAMP,
+                finished_at = NULL,
+                error_message = NULL
+            WHERE ingestion_batch_id = %s
+              AND status IN ('pending', 'failed')
+            RETURNING
+                ingestion_batch_id,
+                ingestion_run_id,
+                file_version_id,
+                batch_number,
+                source_line_start,
+                source_line_end,
+                row_count,
+                status,
+                attempt_count,
+                started_at,
+                finished_at,
+                error_message
+            """,
+            (ingestion_batch_id,),
+        ).fetchone()
+
+    if row is None:
+        raise ValueError(
+            "Unknown batch or batch cannot be started: "
+            f"{ingestion_batch_id}"
+        )
+
+    return _ingestion_batch_from_row(row)
+
+def fail_ingestion_batch(
+    ingestion_batch_id: int,
+    error_message: str,
+) -> IngestionBatch:
+    """Mark a running ingestion batch as failed."""
+
+    with connect("dendroflow_raw") as connection:
+        row = connection.execute(
+            """
+            UPDATE ingestion_batches
+            SET
+                status = 'failed',
+                finished_at = CURRENT_TIMESTAMP,
+                error_message = %s
+            WHERE ingestion_batch_id = %s
+              AND status = 'running'
+            RETURNING
+                ingestion_batch_id,
+                ingestion_run_id,
+                file_version_id,
+                batch_number,
+                source_line_start,
+                source_line_end,
+                row_count,
+                status,
+                attempt_count,
+                started_at,
+                finished_at,
+                error_message
+            """,
+            (
+                error_message,
+                ingestion_batch_id,
+            ),
+        ).fetchone()
+
+    if row is None:
+        raise ValueError(
+            "Unknown or non-running ingestion batch: "
+            f"{ingestion_batch_id}"
+        )
+
+    return _ingestion_batch_from_row(row)
+
+def complete_ingestion_batch(
+    connection,
+    ingestion_batch_id: int,
+) -> IngestionBatch:
+    """Mark a batch completed within an existing transaction."""
+
+    row = connection.execute(
+        """
+        UPDATE ingestion_batches
+        SET
+            status = 'completed',
+            finished_at = CURRENT_TIMESTAMP,
+            error_message = NULL
+        WHERE ingestion_batch_id = %s
+          AND status = 'running'
+        RETURNING
+            ingestion_batch_id,
+            ingestion_run_id,
+            file_version_id,
+            batch_number,
+            source_line_start,
+            source_line_end,
+            row_count,
+            status,
+            attempt_count,
+            started_at,
+            finished_at,
+            error_message
+        """,
+        (ingestion_batch_id,),
+    ).fetchone()
+
+    if row is None:
+        raise ValueError(
+            "Unknown or non-running ingestion batch: "
+            f"{ingestion_batch_id}"
+        )
+
+    return _ingestion_batch_from_row(row)
+
