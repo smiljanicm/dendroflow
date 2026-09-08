@@ -861,7 +861,7 @@ def test_write_ingestion_batch_uses_one_transaction(
             pass
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.connect",
+        "dendroflow.ingestion.writer.connect",
         lambda database: FakeConnectionContext(),
     )
 
@@ -875,7 +875,7 @@ def test_write_ingestion_batch_uses_one_transaction(
         assert received_observations is observations
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.insert_raw_observations",
+        "dendroflow.ingestion.writer.insert_raw_observations",
         fake_insert,
     )
 
@@ -896,7 +896,7 @@ def test_write_ingestion_batch_uses_one_transaction(
         return completed_batch
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.complete_ingestion_batch",
+        "dendroflow.ingestion.writer.complete_ingestion_batch",
         fake_complete,
     )
 
