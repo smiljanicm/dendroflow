@@ -564,7 +564,7 @@ def test_create_ingestion_batch(monkeypatch):
             return FakeResult()
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.connect",
+        "dendroflow.ingestion.batches.connect",
         lambda database: FakeConnection(),
     )
 
@@ -622,7 +622,7 @@ def test_start_ingestion_batch(monkeypatch):
             return FakeResult()
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.connect",
+        "dendroflow.ingestion.batches.connect",
         lambda database: FakeConnection(),
     )
 
@@ -684,7 +684,7 @@ def test_fail_ingestion_batch(monkeypatch):
             return FakeResult()
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.connect",
+        "dendroflow.ingestion.batches.connect",
         lambda database: FakeConnection(),
     )
 
@@ -1848,7 +1848,7 @@ def test_get_ingestion_batch(monkeypatch):
             pass
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.connect",
+        "dendroflow.ingestion.batches.connect",
         lambda database: FakeConnection(),
     )
 
