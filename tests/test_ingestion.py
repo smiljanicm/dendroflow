@@ -1113,7 +1113,7 @@ def test_finalize_ingestion_run_rejects_run_without_batches(
             return BatchCountResult()
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.connect",
+        "dendroflow.ingestion.batches.connect",
         lambda database: FakeConnection(),
     )
 
@@ -1232,67 +1232,67 @@ def test_ingest_file(monkeypatch, tmp_path):
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.get_source_file",
+        "dendroflow.ingestion.service.get_source_file",
         lambda file_id: source_file,
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.fingerprint_file",
+        "dendroflow.ingestion.service.fingerprint_file",
         lambda path: fingerprint,
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.get_or_create_file_version",
+        "dendroflow.ingestion.service.get_or_create_file_version",
         lambda file_id, fingerprint: file_version,
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.get_source_interfaces",
+        "dendroflow.ingestion.service.get_source_interfaces",
         lambda file_id: (interface,),
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.get_deployments",
+        "dendroflow.ingestion.service.get_deployments",
         lambda deployment_ids: {10: deployment},
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.create_ingestion_run_with_targets",
+        "dendroflow.ingestion.service.create_ingestion_run_with_targets",
         lambda file_version_id, interfaces: run,
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.read_source_file",
+        "dendroflow.ingestion.service.read_source_file",
         lambda file_id: iter((tabular_batch,)),
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.create_ingestion_batch",
+        "dendroflow.ingestion.service.create_ingestion_batch",
         lambda **kwargs: pending_batch,
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.start_ingestion_batch",
+        "dendroflow.ingestion.service.start_ingestion_batch",
         lambda ingestion_batch_id: running_batch,
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.write_ingestion_batch",
+        "dendroflow.ingestion.service.write_ingestion_batch",
         lambda batch, observations: completed_batch,
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.finalize_ingestion_run",
+        "dendroflow.ingestion.service.finalize_ingestion_run",
         lambda **kwargs: completed_run,
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.get_resumable_ingestion_run",
+        "dendroflow.ingestion.service.get_resumable_ingestion_run",
         lambda file_version_id, interface_ids: None,
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.get_ingestion_batch",
+        "dendroflow.ingestion.service.get_ingestion_batch",
         lambda ingestion_run_id, file_version_id, batch_number: None,
     )
 
@@ -1412,12 +1412,12 @@ def test_ingest_file_retries_failed_batch(
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.get_source_file",
+        "dendroflow.ingestion.service.get_source_file",
         lambda file_id: source_file,
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.fingerprint_file",
+        "dendroflow.ingestion.service.fingerprint_file",
         lambda path: FileFingerprint(
             file_hash="sha256:test",
             file_size=100,
@@ -1425,7 +1425,7 @@ def test_ingest_file_retries_failed_batch(
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.get_or_create_file_version",
+        "dendroflow.ingestion.service.get_or_create_file_version",
         lambda *args: FileVersion(
             file_version_id=3,
             file_id=1,
@@ -1435,34 +1435,34 @@ def test_ingest_file_retries_failed_batch(
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.get_source_interfaces",
+        "dendroflow.ingestion.service.get_source_interfaces",
         lambda file_id: (interface,),
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.get_deployments",
+        "dendroflow.ingestion.service.get_deployments",
         lambda ids: {10: deployment},
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.create_ingestion_run_with_targets",
+        "dendroflow.ingestion.service.create_ingestion_run_with_targets",
         lambda file_version_id, interfaces: run,
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.read_source_file",
+        "dendroflow.ingestion.service.read_source_file",
         lambda file_id: iter((tabular_batch,)),
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.create_ingestion_batch",
+        "dendroflow.ingestion.service.create_ingestion_batch",
         lambda **kwargs: pending,
     )
 
     starts = iter((running_1, running_2))
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.start_ingestion_batch",
+        "dendroflow.ingestion.service.start_ingestion_batch",
         lambda batch_id: next(starts),
     )
 
@@ -1477,17 +1477,17 @@ def test_ingest_file_retries_failed_batch(
         return completed
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.write_ingestion_batch",
+        "dendroflow.ingestion.service.write_ingestion_batch",
         fake_write,
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.fail_ingestion_batch",
+        "dendroflow.ingestion.service.fail_ingestion_batch",
         lambda batch_id, error: failed,
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.finalize_ingestion_run",
+        "dendroflow.ingestion.service.finalize_ingestion_run",
         lambda **kwargs: IngestionRun(
             ingestion_run_id=7,
             started_at=now,
@@ -1545,27 +1545,27 @@ def test_ingest_file_reuses_completed_ingestion(
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.get_source_file",
+        "dendroflow.ingestion.service.get_source_file",
         lambda file_id: source_file,
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.fingerprint_file",
+        "dendroflow.ingestion.service.fingerprint_file",
         lambda path: fingerprint,
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.get_or_create_file_version",
+        "dendroflow.ingestion.service.get_or_create_file_version",
         lambda file_id, fingerprint: file_version,
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.get_source_interfaces",
+        "dendroflow.ingestion.service.get_source_interfaces",
         lambda file_id: (interface,),
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.get_completed_ingestion_run",
+        "dendroflow.ingestion.service.get_completed_ingestion_run",
         lambda file_version_id, interface_ids: completed_run,
     )
 
@@ -1575,7 +1575,7 @@ def test_ingest_file_reuses_completed_ingestion(
         )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.create_ingestion_run_with_targets",
+        "dendroflow.ingestion.service.create_ingestion_run_with_targets",
         unexpected_create_run,
     )
 
@@ -1615,12 +1615,12 @@ def test_ingest_file_rejects_partial_reingestion(
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.get_source_file",
+        "dendroflow.ingestion.service.get_source_file",
         lambda file_id: source_file,
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.fingerprint_file",
+        "dendroflow.ingestion.service.fingerprint_file",
         lambda path: FileFingerprint(
             file_hash="sha256:test",
             file_size=100,
@@ -1628,7 +1628,7 @@ def test_ingest_file_rejects_partial_reingestion(
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.get_or_create_file_version",
+        "dendroflow.ingestion.service.get_or_create_file_version",
         lambda *args: FileVersion(
             file_version_id=3,
             file_id=1,
@@ -1638,17 +1638,17 @@ def test_ingest_file_rejects_partial_reingestion(
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.get_source_interfaces",
+        "dendroflow.ingestion.service.get_source_interfaces",
         lambda file_id: interfaces,
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.get_completed_ingestion_run",
+        "dendroflow.ingestion.service.get_completed_ingestion_run",
         lambda *args: None,
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.get_ingested_interface_ids",
+        "dendroflow.ingestion.service.get_ingested_interface_ids",
         lambda file_version_id: {1},
     )
 
@@ -1799,7 +1799,7 @@ def test_get_resumable_ingestion_run_returns_none(
             pass
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.connect",
+        "dendroflow.ingestion.runs.connect",
         lambda database: FakeConnection(),
     )
 
@@ -1881,7 +1881,7 @@ def test_get_ingestion_batch_returns_none(
             pass
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.connect",
+        "dendroflow.ingestion.batches.connect",
         lambda database: FakeConnection(),
     )
 
@@ -1949,12 +1949,12 @@ def test_ingest_file_skips_completed_batch(
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.get_source_file",
+        "dendroflow.ingestion.service.get_source_file",
         lambda file_id: source_file,
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.fingerprint_file",
+        "dendroflow.ingestion.service.fingerprint_file",
         lambda path: FileFingerprint(
             file_hash="sha256:test",
             file_size=100,
@@ -1962,7 +1962,7 @@ def test_ingest_file_skips_completed_batch(
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.get_or_create_file_version",
+        "dendroflow.ingestion.service.get_or_create_file_version",
         lambda *args: FileVersion(
             file_version_id=3,
             file_id=1,
@@ -1972,37 +1972,37 @@ def test_ingest_file_skips_completed_batch(
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.get_source_interfaces",
+        "dendroflow.ingestion.service.get_source_interfaces",
         lambda file_id: (interface,),
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.get_completed_ingestion_run",
+        "dendroflow.ingestion.service.get_completed_ingestion_run",
         lambda *args: None,
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.get_ingested_interface_ids",
+        "dendroflow.ingestion.service.get_ingested_interface_ids",
         lambda file_version_id: set(),
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.get_deployments",
+        "dendroflow.ingestion.service.get_deployments",
         lambda ids: {},
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.get_resumable_ingestion_run",
+        "dendroflow.ingestion.service.get_resumable_ingestion_run",
         lambda *args: resumable_run,
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.read_source_file",
+        "dendroflow.ingestion.service.read_source_file",
         lambda file_id: iter((tabular_batch,)),
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.get_ingestion_batch",
+        "dendroflow.ingestion.service.get_ingestion_batch",
         lambda ingestion_run_id, file_version_id, batch_number: completed_batch,
     )
  
@@ -2012,12 +2012,12 @@ def test_ingest_file_skips_completed_batch(
         )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.write_ingestion_batch",
+        "dendroflow.ingestion.service.write_ingestion_batch",
         unexpected_write,
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.finalize_ingestion_run",
+        "dendroflow.ingestion.service.finalize_ingestion_run",
         lambda **kwargs: IngestionRun(
             ingestion_run_id=7,
             started_at=now,
