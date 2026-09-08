@@ -66,7 +66,7 @@ def test_read_source_file_uses_registered_reader_config(
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.get_source_file",
+        "dendroflow.ingestion.sources.get_source_file",
         lambda file_id: source_file,
     )
 
@@ -121,7 +121,7 @@ def test_get_source_interfaces(monkeypatch):
             return FakeResult()
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.connect",
+        "dendroflow.ingestion.sources.connect",
         lambda database: FakeConnection(),
     )
 
@@ -180,7 +180,7 @@ def test_get_deployments(monkeypatch):
             return FakeResult()
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.connect",
+        "dendroflow.ingestion.sources.connect",
         lambda database: FakeConnection(),
     )
 
