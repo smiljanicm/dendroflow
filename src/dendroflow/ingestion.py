@@ -949,10 +949,18 @@ def ingest_file(
 
     deployments = get_deployments(deployment_ids)
 
-    run = create_ingestion_run_with_targets(
+    resumable_run = get_resumable_ingestion_run(
         file_version.file_version_id,
-        interfaces,
+        interface_ids,
     )
+
+    if resumable_run is not None:
+        run = resumable_run
+    else:
+        run = create_ingestion_run_with_targets(
+            file_version.file_version_id,
+            interfaces,
+        )
 
     try:
         batch_number = 0
@@ -963,14 +971,53 @@ def ingest_file(
 
             batch_number += 1
 
-            ingestion_batch = create_ingestion_batch(
+            ingestion_batch = get_ingestion_batch(
                 ingestion_run_id=run.ingestion_run_id,
                 file_version_id=file_version.file_version_id,
                 batch_number=batch_number,
-                source_line_start=tabular_batch.source_line_numbers[0],
-                source_line_end=tabular_batch.source_line_numbers[-1],
-                row_count=len(tabular_batch.dataframe),
             )
+
+            if ingestion_batch is None:
+                ingestion_batch = create_ingestion_batch(
+                    ingestion_run_id=run.ingestion_run_id,
+                    file_version_id=file_version.file_version_id,
+                    batch_number=batch_number,
+                    source_line_start=tabular_batch.source_line_numbers[0],
+                    source_line_end=tabular_batch.source_line_numbers[-1],
+                    row_count=len(tabular_batch.dataframe),
+                )
+
+            else:
+                validate_ingestion_batch_checkpoint(
+                    ingestion_batch,
+                    tabular_batch,
+                )
+
+                if ingestion_batch.status == "completed":
+                    continue
+
+                if ingestion_batch.status == "running":
+                    ingestion_batch = fail_ingestion_batch(
+                        ingestion_batch.ingestion_batch_id,
+                        "Interrupted ingestion detected during resume",
+                    )
+
+                if ingestion_batch.status not in {
+                    "pending",
+                    "failed",
+                }:
+                    raise ValueError(
+                        "Cannot resume ingestion batch "
+                        f"{ingestion_batch.ingestion_batch_id} "
+                        f"with status={ingestion_batch.status}"
+                    )
+
+            if ingestion_batch.attempt_count >= max_attempts:
+                raise RuntimeError(
+                    "Ingestion batch has already reached the maximum "
+                    f"number of attempts: batch_number={batch_number}, "
+                    f"attempt_count={ingestion_batch.attempt_count}"
+                )
 
             while ingestion_batch.attempt_count < max_attempts:
                 ingestion_batch = start_ingestion_batch(
@@ -1021,7 +1068,14 @@ def ingest_file(
 def _create_ingestion_run(connection) -> IngestionRun:
     row = connection.execute(
         """
-        INSERT INTO ingestion_runs DEFAULT VALUES
+        INSERT INTO ingestion_runs (
+            started_at,
+            status
+        )
+        VALUES (
+            CURRENT_TIMESTAMP,
+            'running'
+        )
         RETURNING
             ingestion_run_id,
             started_at,
@@ -1076,3 +1130,125 @@ def create_ingestion_run_with_targets(
             )
 
     return run
+
+def get_resumable_ingestion_run(
+    file_version_id: int,
+    interface_ids: tuple[int, ...],
+) -> IngestionRun | None:
+    """Return a running ingestion run with exactly the requested targets."""
+
+    requested_interface_ids = tuple(
+        sorted(set(interface_ids))
+    )
+
+    if not requested_interface_ids:
+        return None
+
+    with connect("dendroflow_raw") as connection:
+        row = connection.execute(
+            """
+            SELECT
+                ir.ingestion_run_id,
+                ir.started_at,
+                ir.finished_at,
+                ir.status
+            FROM ingestion_runs ir
+            JOIN ingestion_targets it
+                ON it.ingestion_run_id = ir.ingestion_run_id
+            WHERE ir.status = 'running'
+            GROUP BY
+                ir.ingestion_run_id,
+                ir.started_at,
+                ir.finished_at,
+                ir.status
+            HAVING
+                COUNT(*) = %s
+                AND COUNT(*) FILTER (
+                    WHERE it.file_version_id = %s
+                      AND it.interface_id = ANY(%s)
+                ) = %s
+            ORDER BY ir.started_at DESC
+            LIMIT 1
+            """,
+            (
+                len(requested_interface_ids),
+                file_version_id,
+                list(requested_interface_ids),
+                len(requested_interface_ids),
+            ),
+        ).fetchone()
+
+    if row is None:
+        return None
+
+    return IngestionRun(
+        ingestion_run_id=row[0],
+        started_at=row[1],
+        finished_at=row[2],
+        status=row[3],
+    )
+
+def get_ingestion_batch(
+    ingestion_run_id: int,
+    file_version_id: int,
+    batch_number: int,
+) -> IngestionBatch | None:
+    """Return an existing batch checkpoint, if one exists."""
+
+    with connect("dendroflow_raw") as connection:
+        row = connection.execute(
+            """
+            SELECT
+                ingestion_batch_id,
+                ingestion_run_id,
+                file_version_id,
+                batch_number,
+                source_line_start,
+                source_line_end,
+                row_count,
+                status,
+                attempt_count,
+                started_at,
+                finished_at,
+                error_message
+            FROM ingestion_batches
+            WHERE ingestion_run_id = %s
+              AND file_version_id = %s
+              AND batch_number = %s
+            """,
+            (
+                ingestion_run_id,
+                file_version_id,
+                batch_number,
+            ),
+        ).fetchone()
+
+    if row is None:
+        return None
+
+    return _ingestion_batch_from_row(row)
+
+def validate_ingestion_batch_checkpoint(
+    ingestion_batch: IngestionBatch,
+    tabular_batch: TabularBatch,
+) -> None:
+    """Ensure an existing checkpoint still describes the current source batch."""
+
+    if not tabular_batch.source_line_numbers:
+        raise ValueError("Tabular batch has no source line numbers")
+
+    expected_start = tabular_batch.source_line_numbers[0]
+    expected_end = tabular_batch.source_line_numbers[-1]
+    expected_count = len(tabular_batch.dataframe)
+
+    if (
+        ingestion_batch.source_line_start != expected_start
+        or ingestion_batch.source_line_end != expected_end
+        or ingestion_batch.row_count != expected_count
+    ):
+        raise ValueError(
+            "Existing ingestion batch checkpoint does not match "
+            "the current reader batch: "
+            f"batch_number={ingestion_batch.batch_number}"
+        )
+

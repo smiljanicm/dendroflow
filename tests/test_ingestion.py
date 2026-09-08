@@ -9,6 +9,9 @@ import pytest
 from dendroflow.tabular import TabularBatch
 
 from dendroflow.ingestion import (
+    validate_ingestion_batch_checkpoint,
+    get_ingestion_batch,
+    get_resumable_ingestion_run,
     create_ingestion_run_with_targets,
     ingest_file,
     finalize_ingestion_run,
@@ -1283,6 +1286,16 @@ def test_ingest_file(monkeypatch, tmp_path):
         lambda **kwargs: completed_run,
     )
 
+    monkeypatch.setattr(
+        "dendroflow.ingestion.get_resumable_ingestion_run",
+        lambda file_version_id, interface_ids: None,
+    )
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.get_ingestion_batch",
+        lambda ingestion_run_id, file_version_id, batch_number: None,
+    )
+
     result = ingest_file(1)
 
     assert result.status == "completed"
@@ -1724,3 +1737,328 @@ def test_create_ingestion_run_with_targets(monkeypatch):
         (7, 3, 4),
         (7, 3, 5),
     ]
+
+def test_get_resumable_ingestion_run(monkeypatch):
+    now = datetime.now(timezone.utc)
+
+    class FakeResult:
+        def fetchone(self):
+            return (
+                7,
+                now,
+                None,
+                "running",
+            )
+
+    class FakeConnection:
+        def execute(self, query, params):
+            assert params == (
+                2,
+                3,
+                [4, 5],
+                2,
+            )
+
+            return FakeResult()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.connect",
+        lambda database: FakeConnection(),
+    )
+
+    run = get_resumable_ingestion_run(
+        file_version_id=3,
+        interface_ids=(5, 4),
+    )
+
+    assert run is not None
+    assert run.ingestion_run_id == 7
+    assert run.status == "running"
+
+def test_get_resumable_ingestion_run_returns_none(
+    monkeypatch,
+):
+    class FakeResult:
+        def fetchone(self):
+            return None
+
+    class FakeConnection:
+        def execute(self, query, params):
+            return FakeResult()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.connect",
+        lambda database: FakeConnection(),
+    )
+
+    result = get_resumable_ingestion_run(
+        file_version_id=3,
+        interface_ids=(4, 5),
+    )
+
+    assert result is None
+
+def test_get_ingestion_batch(monkeypatch):
+    now = datetime.now(timezone.utc)
+
+    row = (
+        8,          # ingestion_batch_id
+        7,          # ingestion_run_id
+        3,          # file_version_id
+        2,          # batch_number
+        105,        # source_line_start
+        204,        # source_line_end
+        100,        # row_count
+        "completed",
+        1,          # attempt_count
+        now,
+        now,
+        None,
+    )
+
+    class FakeResult:
+        def fetchone(self):
+            return row
+
+    class FakeConnection:
+        def execute(self, query, params):
+            assert params == (
+                7,
+                3,
+                2,
+            )
+            return FakeResult()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.connect",
+        lambda database: FakeConnection(),
+    )
+
+    batch = get_ingestion_batch(
+        ingestion_run_id=7,
+        file_version_id=3,
+        batch_number=2,
+    )
+
+    assert batch is not None
+    assert batch.ingestion_batch_id == 8
+    assert batch.batch_number == 2
+    assert batch.status == "completed"
+
+def test_get_ingestion_batch_returns_none(
+    monkeypatch,
+):
+    class FakeResult:
+        def fetchone(self):
+            return None
+
+    class FakeConnection:
+        def execute(self, query, params):
+            return FakeResult()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.connect",
+        lambda database: FakeConnection(),
+    )
+
+    batch = get_ingestion_batch(
+        ingestion_run_id=7,
+        file_version_id=3,
+        batch_number=2,
+    )
+
+    assert batch is None
+
+def test_ingest_file_skips_completed_batch(
+    monkeypatch,
+    tmp_path,
+):
+    source_file = SourceFile(
+        file_id=1,
+        filepath=tmp_path / "example.csv",
+        timestamp_timezone="UTC",
+        timestamp_format="%Y-%m-%d %H:%M:%S",
+        reader_config={},
+    )
+
+    interface = SourceInterface(
+        interface_id=4,
+        file_id=1,
+        deployment_id=10,
+        values_column="value",
+        timestamp_column="TIMESTAMP",
+        unit="cm",
+    )
+
+    now = datetime.now(timezone.utc)
+
+    resumable_run = IngestionRun(
+        ingestion_run_id=7,
+        started_at=now,
+        finished_at=None,
+        status="running",
+    )
+
+    tabular_batch = TabularBatch(
+        dataframe=pd.DataFrame(
+            {
+                "TIMESTAMP": ["2026-01-01 12:00:00"],
+                "value": [10.5],
+            }
+        ),
+        source_line_numbers=(5,),
+    )
+
+    completed_batch = IngestionBatch(
+        ingestion_batch_id=8,
+        ingestion_run_id=7,
+        file_version_id=3,
+        batch_number=1,
+        source_line_start=5,
+        source_line_end=5,
+        row_count=1,
+        status="completed",
+        attempt_count=1,
+        started_at=now,
+        finished_at=now,
+        error_message=None,
+    )
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.get_source_file",
+        lambda file_id: source_file,
+    )
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.fingerprint_file",
+        lambda path: FileFingerprint(
+            file_hash="sha256:test",
+            file_size=100,
+        ),
+    )
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.get_or_create_file_version",
+        lambda *args: FileVersion(
+            file_version_id=3,
+            file_id=1,
+            file_hash="sha256:test",
+            file_size=100,
+        ),
+    )
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.get_source_interfaces",
+        lambda file_id: (interface,),
+    )
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.get_completed_ingestion_run",
+        lambda *args: None,
+    )
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.get_ingested_interface_ids",
+        lambda file_version_id: set(),
+    )
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.get_deployments",
+        lambda ids: {},
+    )
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.get_resumable_ingestion_run",
+        lambda *args: resumable_run,
+    )
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.read_source_file",
+        lambda file_id: iter((tabular_batch,)),
+    )
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.get_ingestion_batch",
+        lambda ingestion_run_id, file_version_id, batch_number: completed_batch,
+    )
+ 
+    def unexpected_write(*args):
+        raise AssertionError(
+            "Completed batch must not be written again"
+        )
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.write_ingestion_batch",
+        unexpected_write,
+    )
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.finalize_ingestion_run",
+        lambda **kwargs: IngestionRun(
+            ingestion_run_id=7,
+            started_at=now,
+            finished_at=now,
+            status="completed",
+        ),
+    )
+
+    result = ingest_file(1)
+
+    assert result.status == "completed"
+    assert result.ingestion_run_id == 7
+
+def test_validate_ingestion_batch_checkpoint_rejects_mismatch():
+    now = datetime.now(timezone.utc)
+
+    ingestion_batch = IngestionBatch(
+        ingestion_batch_id=8,
+        ingestion_run_id=7,
+        file_version_id=3,
+        batch_number=1,
+        source_line_start=5,
+        source_line_end=104,
+        row_count=100,
+        status="completed",
+        attempt_count=1,
+        started_at=now,
+        finished_at=now,
+        error_message=None,
+    )
+
+    tabular_batch = TabularBatch(
+        dataframe=pd.DataFrame({"value": [1, 2]}),
+        source_line_numbers=(5, 6),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="checkpoint does not match",
+    ):
+        validate_ingestion_batch_checkpoint(
+            ingestion_batch,
+            tabular_batch,
+        )
