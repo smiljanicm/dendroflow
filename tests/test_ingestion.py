@@ -365,7 +365,7 @@ def test_get_or_create_file_version_reuses_existing_version(monkeypatch):
             return SelectResult()
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.connect",
+        "dendroflow.ingestion.versions.connect",
         lambda database: FakeConnection(),
     )
 
@@ -412,7 +412,7 @@ def test_get_or_create_file_version_creates_new_version(monkeypatch):
             return InsertResult()
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.connect",
+        "dendroflow.ingestion.versions.connect",
         lambda database: FakeConnection(),
     )
 
