@@ -34,12 +34,28 @@ class CsvReader:
         else:
             skipped_rows = set(self.skiprows)
 
-        skip_blank_lines = self.kwargs.get("skip_blank_lines", True)
-        encoding = self.kwargs.get("encoding", "utf-8")
+        skip_blank_lines = self.kwargs.get(
+            "skip_blank_lines",
+            True,
+        )
 
-        candidate_lines: list[int] = []
+        encoding = self.kwargs.get(
+            "encoding",
+            "utf-8",
+        )
 
-        with path.open("r", encoding=encoding) as file:
+        first_data_candidate = (
+            0
+            if self.header is None
+            else self.header + 1
+        )
+
+        candidate_index = 0
+
+        with path.open(
+            "r",
+            encoding=encoding,
+        ) as file:
             for zero_based_index, line in enumerate(file):
                 if zero_based_index in skipped_rows:
                     continue
@@ -47,13 +63,10 @@ class CsvReader:
                 if skip_blank_lines and not line.strip():
                     continue
 
-                candidate_lines.append(zero_based_index + 1)
+                if candidate_index >= first_data_candidate:
+                    yield zero_based_index + 1
 
-        if self.header is None:
-            yield from candidate_lines
-            return
-
-        yield from candidate_lines[self.header + 1 :]
+                candidate_index += 1
 
     def read(self, path: Path) -> Iterator[TabularBatch]:
         line_numbers = iter(self._iter_data_line_numbers(path))
