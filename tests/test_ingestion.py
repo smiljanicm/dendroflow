@@ -9,6 +9,7 @@ import pytest
 from dendroflow.tabular import TabularBatch
 
 from dendroflow.ingestion import (
+    create_ingestion_run_with_targets,
     ingest_file,
     finalize_ingestion_run,
     insert_raw_observations,
@@ -1253,8 +1254,8 @@ def test_ingest_file(monkeypatch, tmp_path):
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.create_ingestion_run",
-        lambda: run,
+        "dendroflow.ingestion.create_ingestion_run_with_targets",
+        lambda file_version_id, interfaces: run,
     )
 
     monkeypatch.setattr(
@@ -1431,8 +1432,8 @@ def test_ingest_file_retries_failed_batch(
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.create_ingestion_run",
-        lambda: run,
+        "dendroflow.ingestion.create_ingestion_run_with_targets",
+        lambda file_version_id, interfaces: run,
     )
 
     monkeypatch.setattr(
@@ -1490,3 +1491,236 @@ def test_ingest_file_retries_failed_batch(
     assert writes["count"] == 2
     assert result.status == "completed"
 
+def test_ingest_file_reuses_completed_ingestion(
+    monkeypatch,
+    tmp_path,
+):
+    source_file = SourceFile(
+        file_id=1,
+        filepath=tmp_path / "example.csv",
+        timestamp_timezone="UTC",
+        timestamp_format="%Y-%m-%d %H:%M:%S",
+        reader_config={},
+    )
+
+    fingerprint = FileFingerprint(
+        file_hash="sha256:test",
+        file_size=100,
+    )
+
+    file_version = FileVersion(
+        file_version_id=3,
+        file_id=1,
+        file_hash="sha256:test",
+        file_size=100,
+    )
+
+    interface = SourceInterface(
+        interface_id=4,
+        file_id=1,
+        deployment_id=10,
+        values_column="value",
+        timestamp_column="TIMESTAMP",
+        unit="cm",
+    )
+
+    completed_run = IngestionRun(
+        ingestion_run_id=7,
+        started_at=datetime.now(timezone.utc),
+        finished_at=datetime.now(timezone.utc),
+        status="completed",
+    )
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.get_source_file",
+        lambda file_id: source_file,
+    )
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.fingerprint_file",
+        lambda path: fingerprint,
+    )
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.get_or_create_file_version",
+        lambda file_id, fingerprint: file_version,
+    )
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.get_source_interfaces",
+        lambda file_id: (interface,),
+    )
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.get_completed_ingestion_run",
+        lambda file_version_id, interface_ids: completed_run,
+    )
+
+    def unexpected_create_run():
+        raise AssertionError(
+            "A new ingestion run must not be created"
+        )
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.create_ingestion_run_with_targets",
+        unexpected_create_run,
+    )
+
+    result = ingest_file(1)
+
+    assert result == completed_run
+
+def test_ingest_file_rejects_partial_reingestion(
+    monkeypatch,
+    tmp_path,
+):
+    source_file = SourceFile(
+        file_id=1,
+        filepath=tmp_path / "example.csv",
+        timestamp_timezone="UTC",
+        timestamp_format="%Y-%m-%d %H:%M:%S",
+        reader_config={},
+    )
+
+    interfaces = (
+        SourceInterface(
+            interface_id=1,
+            file_id=1,
+            deployment_id=10,
+            values_column="temperature",
+            timestamp_column="TIMESTAMP",
+            unit="deg C",
+        ),
+        SourceInterface(
+            interface_id=2,
+            file_id=1,
+            deployment_id=11,
+            values_column="water_level",
+            timestamp_column="TIMESTAMP",
+            unit="cm",
+        ),
+    )
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.get_source_file",
+        lambda file_id: source_file,
+    )
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.fingerprint_file",
+        lambda path: FileFingerprint(
+            file_hash="sha256:test",
+            file_size=100,
+        ),
+    )
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.get_or_create_file_version",
+        lambda *args: FileVersion(
+            file_version_id=3,
+            file_id=1,
+            file_hash="sha256:test",
+            file_size=100,
+        ),
+    )
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.get_source_interfaces",
+        lambda file_id: interfaces,
+    )
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.get_completed_ingestion_run",
+        lambda *args: None,
+    )
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.get_ingested_interface_ids",
+        lambda file_version_id: {1},
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="partially already ingested",
+    ):
+        ingest_file(1)
+
+def test_create_ingestion_run_with_targets(monkeypatch):
+    interface_1 = SourceInterface(
+        interface_id=4,
+        file_id=1,
+        deployment_id=10,
+        values_column="value_a",
+        timestamp_column="TIMESTAMP",
+        unit="cm",
+    )
+
+    interface_2 = SourceInterface(
+        interface_id=5,
+        file_id=1,
+        deployment_id=11,
+        values_column="value_b",
+        timestamp_column="TIMESTAMP",
+        unit="deg C",
+    )
+
+    now = datetime.now(timezone.utc)
+
+    run_row = (
+        7,
+        now,
+        None,
+        "running",
+    )
+
+    class FakeCursor:
+        def __init__(self):
+            self.executed = None
+
+        def executemany(self, query, values):
+            self.executed = values
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    class FakeResult:
+        def fetchone(self):
+            return run_row
+
+    class FakeConnection:
+        def __init__(self):
+            self.cursor_instance = FakeCursor()
+
+        def execute(self, query):
+            return FakeResult()
+
+        def cursor(self):
+            return self.cursor_instance
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    connection = FakeConnection()
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.connect",
+        lambda database: connection,
+    )
+
+    run = create_ingestion_run_with_targets(
+        3,
+        (interface_1, interface_2),
+    )
+
+    assert run.ingestion_run_id == 7
+
+    assert connection.cursor_instance.executed == [
+        (7, 3, 4),
+        (7, 3, 5),
+    ]

@@ -817,6 +817,76 @@ def finalize_ingestion_run(
         status=row[3],
     )
 
+def get_ingested_interface_ids(
+    file_version_id: int,
+) -> set[int]:
+    """Return interfaces successfully ingested for a file version."""
+
+    with connect("dendroflow_raw") as connection:
+        rows = connection.execute(
+            """
+            SELECT DISTINCT
+                ii.interface_id
+            FROM ingestion_interfaces ii
+            JOIN ingestion_runs ir
+                ON ir.ingestion_run_id = ii.ingestion_run_id
+            WHERE ii.file_version_id = %s
+              AND ir.status = 'completed'
+            """,
+            (file_version_id,),
+        ).fetchall()
+
+    return {row[0] for row in rows}
+
+def get_completed_ingestion_run(
+    file_version_id: int,
+    interface_ids: tuple[int, ...],
+) -> IngestionRun | None:
+    """Return a completed run containing all requested interfaces."""
+
+    if not interface_ids:
+        return None
+
+    with connect("dendroflow_raw") as connection:
+        row = connection.execute(
+            """
+            SELECT
+                ir.ingestion_run_id,
+                ir.started_at,
+                ir.finished_at,
+                ir.status
+            FROM ingestion_runs ir
+            JOIN ingestion_interfaces ii
+                ON ii.ingestion_run_id = ir.ingestion_run_id
+            WHERE ii.file_version_id = %s
+              AND ii.interface_id = ANY(%s)
+              AND ir.status = 'completed'
+            GROUP BY
+                ir.ingestion_run_id,
+                ir.started_at,
+                ir.finished_at,
+                ir.status
+            HAVING COUNT(DISTINCT ii.interface_id) = %s
+            ORDER BY ir.finished_at DESC
+            LIMIT 1
+            """,
+            (
+                file_version_id,
+                list(interface_ids),
+                len(interface_ids),
+            ),
+        ).fetchone()
+
+    if row is None:
+        return None
+
+    return IngestionRun(
+        ingestion_run_id=row[0],
+        started_at=row[1],
+        finished_at=row[2],
+        status=row[3],
+    )
+
 def ingest_file(
     file_id: int,
     *,
@@ -843,6 +913,35 @@ def ingest_file(
             f"No source interfaces registered for file_id={file_id}"
         )
 
+    interface_ids = tuple(
+        interface.interface_id
+        for interface in interfaces
+    )
+
+    completed_run = get_completed_ingestion_run(
+        file_version.file_version_id,
+        interface_ids,
+    )
+
+    if completed_run is not None:
+        return completed_run
+
+    ingested_interface_ids = get_ingested_interface_ids(
+       file_version.file_version_id
+    )
+
+    already_ingested = (
+        set(interface_ids)
+        & ingested_interface_ids
+    )
+
+    if already_ingested:
+        raise ValueError(
+            "File version is partially already ingested for "
+            f"interfaces {sorted(already_ingested)}. "
+            "Resume/selective ingestion is required."
+        )
+
     deployment_ids = tuple(
         interface.deployment_id
         for interface in interfaces
@@ -850,7 +949,10 @@ def ingest_file(
 
     deployments = get_deployments(deployment_ids)
 
-    run = create_ingestion_run()
+    run = create_ingestion_run_with_targets(
+        file_version.file_version_id,
+        interfaces,
+    )
 
     try:
         batch_number = 0
@@ -915,3 +1017,62 @@ def ingest_file(
             pass
 
         raise
+
+def _create_ingestion_run(connection) -> IngestionRun:
+    row = connection.execute(
+        """
+        INSERT INTO ingestion_runs DEFAULT VALUES
+        RETURNING
+            ingestion_run_id,
+            started_at,
+            finished_at,
+            status
+        """
+    ).fetchone()
+
+    return IngestionRun(
+        ingestion_run_id=row[0],
+        started_at=row[1],
+        finished_at=row[2],
+        status=row[3],
+    )
+
+def create_ingestion_run() -> IngestionRun:
+    with connect("dendroflow_raw") as connection:
+        return _create_ingestion_run(connection)
+
+def create_ingestion_run_with_targets(
+    file_version_id: int,
+    interfaces: tuple[SourceInterface, ...],
+) -> IngestionRun:
+    """Create an ingestion run together with its immutable target snapshot."""
+
+    if not interfaces:
+        raise ValueError(
+            "Cannot create ingestion run without interfaces"
+        )
+
+    with connect("dendroflow_raw") as connection:
+        run = _create_ingestion_run(connection)
+
+        with connection.cursor() as cursor:
+            cursor.executemany(
+                """
+                INSERT INTO ingestion_targets (
+                    ingestion_run_id,
+                    file_version_id,
+                    interface_id
+                )
+                VALUES (%s, %s, %s)
+                """,
+                [
+                    (
+                        run.ingestion_run_id,
+                        file_version_id,
+                        interface.interface_id,
+                    )
+                    for interface in interfaces
+                ],
+            )
+
+    return run
