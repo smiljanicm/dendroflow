@@ -1,7 +1,5 @@
 from collections.abc import Iterator
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 from hashlib import sha256
 
 import pandas as pd
@@ -10,17 +8,16 @@ from dendroflow.database import connect
 from dendroflow.readers import reader_from_config
 from dendroflow.tabular import TabularBatch
 
-from datetime import datetime
-
-@dataclass(frozen=True)
-class SourceFile:
-    """Represent a source file registered in DendroFlow."""
-
-    file_id: int
-    filepath: Path
-    timestamp_timezone: str
-    timestamp_format: str
-    reader_config: dict[str, Any]
+from .models import (
+    Deployment,
+    FileFingerprint,
+    FileVersion,
+    IngestionBatch,
+    IngestionRun,
+    NormalizedObservation,
+    SourceFile,
+    SourceInterface,
+)
 
 def get_source_file(file_id: int) -> SourceFile:
     """Load a source-file definition from the RAW database."""
@@ -61,18 +58,6 @@ def read_source_file(file_id: int) -> Iterator[TabularBatch]:
 
     yield from reader.read(source_file.filepath)
 
-@dataclass(frozen=True)
-class SourceInterface:
-    """Represent one measurement interface registered for a source file."""
-
-    interface_id: int
-    file_id: int
-    deployment_id: int
-    values_column: str
-    timestamp_column: str
-    unit: str | None
-
-
 def get_source_interfaces(file_id: int) -> tuple[SourceInterface, ...]:
     """Load measurement interfaces registered for a source file."""
 
@@ -104,18 +89,6 @@ def get_source_interfaces(file_id: int) -> tuple[SourceInterface, ...]:
         )
         for row in rows
     )
-
-@dataclass(frozen=True)
-class Deployment:
-    """Represent deployment metadata needed during ingestion."""
-
-    deployment_id: int
-    sensor_id: int
-    location_id: int
-    variable_id: int
-    valid_from: datetime
-    valid_to: datetime
-
 
 def get_deployments(
     deployment_ids: tuple[int, ...],
@@ -152,17 +125,6 @@ def get_deployments(
         )
         for row in rows
     }
-
-@dataclass(frozen=True)
-class NormalizedObservation:
-    """Represent one observation ready for RAW ingestion."""
-
-    location_id: int
-    variable_id: int
-    timestamp: datetime
-    value: float
-    interface_id: int
-    source_row_number: int
 
 def normalize_batch(
     batch: TabularBatch,
@@ -249,14 +211,6 @@ def normalize_batch(
 
 HASH_CHUNK_SIZE = 1024 * 1024
 
-@dataclass(frozen=True)
-class FileFingerprint:
-    """Represent the content identity of a physical source file."""
-
-    file_hash: str
-    file_size: int
-
-
 def fingerprint_file(path: Path) -> FileFingerprint:
     """Calculate a source file's SHA-256 hash and size."""
 
@@ -277,16 +231,6 @@ def fingerprint_file(path: Path) -> FileFingerprint:
         file_hash=f"sha256:{digest.hexdigest()}",
         file_size=file_size,
     )
-
-@dataclass(frozen=True)
-class FileVersion:
-    """Represent an immutable version of a registered source file."""
-
-    file_version_id: int
-    file_id: int
-    file_hash: str
-    file_size: int
-
 
 def get_or_create_file_version(
     file_id: int,
@@ -349,16 +293,6 @@ def get_or_create_file_version(
         file_size=row[3],
     )
 
-@dataclass(frozen=True)
-class IngestionRun:
-    """Represent one DendroFlow ingestion execution."""
-
-    ingestion_run_id: int
-    started_at: datetime
-    finished_at: datetime | None
-    status: str
-
-
 def create_ingestion_run() -> IngestionRun:
     """Create a new running ingestion run."""
 
@@ -390,7 +324,6 @@ def create_ingestion_run() -> IngestionRun:
         finished_at=row[2],
         status=row[3],
     )
-
 
 def finish_ingestion_run(
     ingestion_run_id: int,
@@ -437,23 +370,6 @@ def finish_ingestion_run(
         finished_at=row[2],
         status=row[3],
     )
-
-@dataclass(frozen=True)
-class IngestionBatch:
-    """Represent one checkpointed ingestion batch."""
-
-    ingestion_batch_id: int
-    ingestion_run_id: int
-    file_version_id: int
-    batch_number: int
-    source_line_start: int
-    source_line_end: int
-    row_count: int
-    status: str
-    attempt_count: int
-    started_at: datetime | None
-    finished_at: datetime | None
-    error_message: str | None
 
 def _ingestion_batch_from_row(row) -> IngestionBatch:
     return IngestionBatch(
@@ -1251,4 +1167,3 @@ def validate_ingestion_batch_checkpoint(
             "the current reader batch: "
             f"batch_number={ingestion_batch.batch_number}"
         )
-
