@@ -9,6 +9,7 @@ from .models import (
     SourceInterface,
 )
 
+
 def normalize_batch(
     batch: TabularBatch,
     source_file: SourceFile,
@@ -91,3 +92,4 @@ def normalize_batch(
             )
 
     return tuple(observations)
+

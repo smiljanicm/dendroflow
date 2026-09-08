@@ -3,6 +3,7 @@ from dendroflow.tabular import TabularBatch
 
 from .models import IngestionBatch
 
+
 def _ingestion_batch_from_row(row) -> IngestionBatch:
     return IngestionBatch(
         ingestion_batch_id=row[0],
@@ -18,6 +19,7 @@ def _ingestion_batch_from_row(row) -> IngestionBatch:
         finished_at=row[10],
         error_message=row[11],
     )
+
 
 def create_ingestion_batch(
     ingestion_run_id: int,
@@ -70,6 +72,7 @@ def create_ingestion_batch(
 
     return _ingestion_batch_from_row(row)
 
+
 def start_ingestion_batch(
     ingestion_batch_id: int,
 ) -> IngestionBatch:
@@ -111,6 +114,7 @@ def start_ingestion_batch(
         )
 
     return _ingestion_batch_from_row(row)
+
 
 def fail_ingestion_batch(
     ingestion_batch_id: int,
@@ -156,6 +160,7 @@ def fail_ingestion_batch(
 
     return _ingestion_batch_from_row(row)
 
+
 def complete_ingestion_batch(
     connection,
     ingestion_batch_id: int,
@@ -195,6 +200,7 @@ def complete_ingestion_batch(
         )
 
     return _ingestion_batch_from_row(row)
+
 
 def get_ingestion_batch(
     ingestion_run_id: int,
@@ -236,6 +242,7 @@ def get_ingestion_batch(
 
     return _ingestion_batch_from_row(row)
 
+
 def validate_ingestion_batch_checkpoint(
     ingestion_batch: IngestionBatch,
     tabular_batch: TabularBatch,
@@ -259,3 +266,4 @@ def validate_ingestion_batch_checkpoint(
             "the current reader batch: "
             f"batch_number={ingestion_batch.batch_number}"
         )
+

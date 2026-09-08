@@ -95,3 +95,4 @@ class IngestionBatch:
     started_at: datetime | None
     finished_at: datetime | None
     error_message: str | None
+

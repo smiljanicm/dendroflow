@@ -126,3 +126,4 @@ def get_deployments(
         )
         for row in rows
     }
+

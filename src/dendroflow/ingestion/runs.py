@@ -5,6 +5,18 @@ from .models import (
     SourceInterface,
 )
 
+
+def _ingestion_run_from_row(row) -> IngestionRun:
+    """Convert a database row into an ingestion run."""
+
+    return IngestionRun(
+        ingestion_run_id=row[0],
+        started_at=row[1],
+        finished_at=row[2],
+        status=row[3],
+    )
+
+
 def _create_ingestion_run(connection) -> IngestionRun:
     row = connection.execute(
         """
@@ -24,16 +36,13 @@ def _create_ingestion_run(connection) -> IngestionRun:
         """
     ).fetchone()
 
-    return IngestionRun(
-        ingestion_run_id=row[0],
-        started_at=row[1],
-        finished_at=row[2],
-        status=row[3],
-    )
+    return _ingestion_run_from_row(row)
+
 
 def create_ingestion_run() -> IngestionRun:
     with connect("dendroflow_raw") as connection:
         return _create_ingestion_run(connection)
+
 
 def finish_ingestion_run(
     ingestion_run_id: int,
@@ -74,12 +83,8 @@ def finish_ingestion_run(
             f"{ingestion_run_id}"
         )
 
-    return IngestionRun(
-        ingestion_run_id=row[0],
-        started_at=row[1],
-        finished_at=row[2],
-        status=row[3],
-    )
+    return _ingestion_run_from_row(row)
+
 
 def create_ingestion_run_with_targets(
     file_version_id: int,
@@ -116,6 +121,7 @@ def create_ingestion_run_with_targets(
             )
 
     return run
+
 
 def get_completed_ingestion_run(
     file_version_id: int,
@@ -159,12 +165,8 @@ def get_completed_ingestion_run(
     if row is None:
         return None
 
-    return IngestionRun(
-        ingestion_run_id=row[0],
-        started_at=row[1],
-        finished_at=row[2],
-        status=row[3],
-    )
+    return _ingestion_run_from_row(row)
+
 
 def get_ingested_interface_ids(
     file_version_id: int,
@@ -186,6 +188,7 @@ def get_ingested_interface_ids(
         ).fetchall()
 
     return {row[0] for row in rows}
+
 
 def get_resumable_ingestion_run(
     file_version_id: int,
@@ -237,12 +240,8 @@ def get_resumable_ingestion_run(
     if row is None:
         return None
 
-    return IngestionRun(
-        ingestion_run_id=row[0],
-        started_at=row[1],
-        finished_at=row[2],
-        status=row[3],
-    )
+    return _ingestion_run_from_row(row)
+
 
 def finalize_ingestion_run(
     ingestion_run_id: int,
@@ -326,9 +325,5 @@ def finalize_ingestion_run(
                 f"{ingestion_run_id}"
             )
 
-    return IngestionRun(
-        ingestion_run_id=row[0],
-        started_at=row[1],
-        finished_at=row[2],
-        status=row[3],
-    )
+    return _ingestion_run_from_row(row)
+

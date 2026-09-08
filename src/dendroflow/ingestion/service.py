@@ -27,6 +27,7 @@ from .versions import (
 )
 from .writer import write_ingestion_batch
 
+
 def ingest_file(
     file_id: int,
     *,
@@ -67,7 +68,7 @@ def ingest_file(
         return completed_run
 
     ingested_interface_ids = get_ingested_interface_ids(
-       file_version.file_version_id
+        file_version.file_version_id
     )
 
     already_ingested = (
@@ -204,3 +205,4 @@ def ingest_file(
             pass
 
         raise
+

@@ -1,12 +1,12 @@
 from collections.abc import Iterator
 from itertools import islice
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
-from typing import Any
-
 from dendroflow.tabular import TabularBatch, TabularReader
+
 
 class CsvReader:
     """Read CSV-compatible tabular files with physical line provenance."""
@@ -101,6 +101,7 @@ class CsvReader:
                 dataframe=dataframe,
                 source_line_numbers=source_lines,
             )
+
 
 def reader_from_config(config: dict[str, Any]) -> TabularReader:
     """Create a tabular reader from reader configuration."""

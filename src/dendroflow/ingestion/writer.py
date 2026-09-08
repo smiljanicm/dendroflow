@@ -6,6 +6,7 @@ from .models import (
     NormalizedObservation,
 )
 
+
 def insert_raw_observations(
     connection,
     ingestion_run_id: int,
@@ -42,6 +43,7 @@ def insert_raw_observations(
             """,
             rows,
         )
+
 
 def write_ingestion_batch(
     batch: IngestionBatch,
@@ -85,3 +87,4 @@ def write_ingestion_batch(
         )
 
     return completed_batch
+

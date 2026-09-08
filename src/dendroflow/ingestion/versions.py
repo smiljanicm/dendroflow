@@ -8,7 +8,9 @@ from .models import (
     FileVersion,
 )
 
+
 HASH_CHUNK_SIZE = 1024 * 1024
+
 
 def fingerprint_file(path: Path) -> FileFingerprint:
     """Calculate a source file's SHA-256 hash and size."""
@@ -30,6 +32,7 @@ def fingerprint_file(path: Path) -> FileFingerprint:
         file_hash=f"sha256:{digest.hexdigest()}",
         file_size=file_size,
     )
+
 
 def get_or_create_file_version(
     file_id: int,
@@ -91,3 +94,4 @@ def get_or_create_file_version(
         file_hash=row[2],
         file_size=row[3],
     )
+

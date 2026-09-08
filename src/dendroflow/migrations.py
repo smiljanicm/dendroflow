@@ -21,6 +21,7 @@ def get_migrations_directory(database: str) -> Path:
         / "migrations"
     )
 
+
 def validate_migration_filename(path: Path) -> None:
     """Validate a migration filename."""
     if not MIGRATION_FILENAME_PATTERN.fullmatch(path.name):
@@ -75,6 +76,7 @@ def get_applied_migrations(database: str) -> set[str]:
 
     return {row[0] for row in rows}
 
+
 def apply_migration(database: str, migration_file: Path) -> None:
     """Apply one migration and record it as successfully applied."""
     version = migration_file.name
@@ -92,6 +94,7 @@ def apply_migration(database: str, migration_file: Path) -> None:
             (version,),
         )
 
+
 def get_pending_migrations(database: str) -> list[Path]:
     """Return migration files that have not yet been applied."""
     migration_files = get_migration_files(database)
@@ -102,6 +105,7 @@ def get_pending_migrations(database: str) -> list[Path]:
         for migration_file in migration_files
         if migration_file.name not in applied_migrations
     ]
+
 
 def migrate_database(database: str) -> list[str]:
     """Apply all pending migrations for one database."""
@@ -116,3 +120,4 @@ def migrate_database(database: str) -> list[str]:
         applied_versions.append(migration_file.name)
 
     return applied_versions
+
