@@ -4,6 +4,8 @@ from pydantic import ValidationError
 from dendroflow.configuration import (
     ConfigModel,
     DeploymentConfig,
+    DeploymentLookupConfig,
+    DeploymentUpdateConfig,
     FileConfig,
     InitialLocationLabelConfig,
     InterfaceConfig,
@@ -11,6 +13,7 @@ from dendroflow.configuration import (
     ReaderConfig,
     SensorConfig,
     SensorModelConfig,
+    SensorUpdateConfig,
     SiteConfig,
     TimestampConfig,
     VariableConfig,
@@ -237,4 +240,106 @@ def test_config_model_accepts_files():
     )
 
     assert len(config.files) == 1
+
+
+def test_references_accept_minimal_deployment_lookup():
+    config = ConfigModel(
+        references={
+            "deployments": {
+                "water_level_main": {
+                    "sensor": "123456",
+                }
+            }
+        }
+    )
+
+    lookup = config.references.deployments["water_level_main"]
+    assert lookup.sensor == "123456"
+    assert lookup.variable is None
+
+
+def test_lookup_rejects_empty_selector():
+    with pytest.raises(
+        ValidationError,
+        match="lookup must contain at least one identifying field",
+    ):
+        DeploymentLookupConfig()
+
+
+def test_sensor_model_reference_accepts_natural_identity():
+    config = ConfigModel(
+        references={
+            "sensor_models": {
+                "cs451": {
+                    "manufacturer": "Campbell Scientific",
+                    "model": "CS451",
+                }
+            }
+        }
+    )
+
+    lookup = config.references.sensor_models["cs451"]
+    assert lookup.model == "CS451"
+
+
+def test_sensor_update_accepts_serial_number_change():
+    update = SensorUpdateConfig(
+        update={
+            "serial_number": "OLD123",
+        },
+        set={
+            "serial_number": "NEW123",
+        },
+    )
+
+    assert update.update.serial_number == "OLD123"
+    assert update.set.serial_number == "NEW123"
+
+
+def test_update_rejects_empty_set():
+    with pytest.raises(
+        ValidationError,
+        match="set must contain at least one field",
+    ):
+        SensorUpdateConfig(
+            update={
+                "serial_number": "123456",
+            },
+            set={},
+        )
+
+
+def test_deployment_update_accepts_valid_to():
+    update = DeploymentUpdateConfig(
+        update={
+            "sensor": "123456",
+            "variable": "water_level",
+        },
+        set={
+            "valid_to": "2026-09-01T00:00:00Z",
+        },
+    )
+
+    assert update.set.valid_to is not None
+
+
+def test_deployment_update_can_clear_valid_to():
+    update = DeploymentUpdateConfig(
+        update={
+            "sensor": "123456",
+        },
+        set={
+            "valid_to": None,
+        },
+    )
+
+    assert "valid_to" in update.set.model_fields_set
+    assert update.set.valid_to is None
+
+
+def test_config_defaults_references_and_updates_to_empty():
+    config = ConfigModel()
+
+    assert config.references.deployments == {}
+    assert config.updates.sensors == []
 

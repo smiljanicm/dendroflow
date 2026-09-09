@@ -1,8 +1,8 @@
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 
 class ConfigBaseModel(BaseModel):
@@ -192,6 +192,144 @@ class FileConfig(ConfigBaseModel):
     ref: str | None = None
 
 
+ReferenceAlias = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1),
+]
+
+
+class LookupConfig(ConfigBaseModel):
+    """Base model for selectors of existing resources."""
+
+    @model_validator(mode="after")
+    def validate_lookup(self) -> "LookupConfig":
+        values = self.model_dump(exclude_none=True)
+
+        if not values:
+            raise ValueError(
+                "lookup must contain at least one identifying field"
+            )
+
+        return self
+
+
+class SiteLookupConfig(LookupConfig):
+    site_code: str | None = None
+
+
+class LocationTypeLookupConfig(LookupConfig):
+    type: str | None = None
+
+
+class SensorTypeLookupConfig(LookupConfig):
+    type: str | None = None
+
+
+class VariableLookupConfig(LookupConfig):
+    variable: str | None = None
+
+
+class SensorModelLookupConfig(LookupConfig):
+    manufacturer: str | None = None
+    model: str | None = None
+
+
+class SensorLookupConfig(LookupConfig):
+    serial_number: str | None = None
+
+
+class LocationLookupConfig(LookupConfig):
+    site: str | None = None
+    initial_label: str | None = None
+
+
+class DeploymentLookupConfig(LookupConfig):
+    sensor: str | None = None
+    location: str | None = None
+    variable: str | None = None
+    valid_from: datetime | None = None
+
+
+class FileLookupConfig(LookupConfig):
+    path: str | None = None
+
+
+class ReferencesConfig(ConfigBaseModel):
+    sites: dict[ReferenceAlias, SiteLookupConfig] = Field(
+        default_factory=dict
+    )
+    location_types: dict[
+        ReferenceAlias, LocationTypeLookupConfig
+    ] = Field(default_factory=dict)
+    sensor_types: dict[
+        ReferenceAlias, SensorTypeLookupConfig
+    ] = Field(default_factory=dict)
+    variables: dict[ReferenceAlias, VariableLookupConfig] = Field(
+        default_factory=dict
+    )
+    sensor_models: dict[
+        ReferenceAlias, SensorModelLookupConfig
+    ] = Field(default_factory=dict)
+    sensors: dict[ReferenceAlias, SensorLookupConfig] = Field(
+        default_factory=dict
+    )
+    locations: dict[ReferenceAlias, LocationLookupConfig] = Field(
+        default_factory=dict
+    )
+    deployments: dict[
+        ReferenceAlias, DeploymentLookupConfig
+    ] = Field(default_factory=dict)
+    files: dict[ReferenceAlias, FileLookupConfig] = Field(
+        default_factory=dict
+    )
+
+
+class UpdateFieldsConfig(ConfigBaseModel):
+    """Base model for fields explicitly requested to change."""
+
+    @model_validator(mode="after")
+    def validate_set(self) -> "UpdateFieldsConfig":
+        if not self.model_fields_set:
+            raise ValueError(
+                "set must contain at least one field"
+            )
+
+        return self
+
+
+class SensorUpdateFieldsConfig(UpdateFieldsConfig):
+    serial_number: str | None = Field(
+        default=None,
+        min_length=1,
+    )
+    description: str | None = None
+
+
+class SensorUpdateConfig(ConfigBaseModel):
+    update: SensorLookupConfig
+    set: SensorUpdateFieldsConfig
+
+
+class DeploymentUpdateFieldsConfig(UpdateFieldsConfig):
+    sensor: str | None = Field(default=None, min_length=1)
+    location: str | None = Field(default=None, min_length=1)
+    variable: str | None = Field(default=None, min_length=1)
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
+
+
+class DeploymentUpdateConfig(ConfigBaseModel):
+    update: DeploymentLookupConfig
+    set: DeploymentUpdateFieldsConfig
+
+
+class UpdatesConfig(ConfigBaseModel):
+    sensors: list[SensorUpdateConfig] = Field(default_factory=list)
+    deployments: list[DeploymentUpdateConfig] = Field(
+        default_factory=list
+    )
+
+
 class ConfigModel(ConfigBaseModel):
     sites: list[SiteConfig] = Field(default_factory=list)
     location_types: list[LocationTypeConfig] = Field(default_factory=list)
@@ -205,4 +343,11 @@ class ConfigModel(ConfigBaseModel):
     deployments: list[DeploymentConfig] = Field(default_factory=list)
 
     files: list[FileConfig] = Field(default_factory=list)
+
+    references: ReferencesConfig = Field(
+        default_factory=ReferencesConfig
+    )
+    updates: UpdatesConfig = Field(
+        default_factory=UpdatesConfig
+    )
 

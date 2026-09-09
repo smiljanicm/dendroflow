@@ -1,6 +1,8 @@
 from .models import (
     ConfigModel,
     DeploymentConfig,
+    DeploymentLookupConfig,
+    DeploymentUpdateConfig,
     FileConfig,
     InitialLocationLabelConfig,
     InterfaceConfig,
@@ -11,6 +13,7 @@ from .models import (
     SensorConfig,
     SensorModelConfig,
     SensorTypeConfig,
+    SensorUpdateConfig,
     SiteConfig,
     TimestampConfig,
     VariableConfig,
@@ -19,6 +22,8 @@ from .models import (
 __all__ = [
     "ConfigModel",
     "DeploymentConfig",
+    "DeploymentLookupConfig",
+    "DeploymentUpdateConfig",
     "FileConfig",
     "InitialLocationLabelConfig",
     "InterfaceConfig",
@@ -29,6 +34,7 @@ __all__ = [
     "SensorConfig",
     "SensorModelConfig",
     "SensorTypeConfig",
+    "SensorUpdateConfig",
     "SiteConfig",
     "TimestampConfig",
     "VariableConfig",
