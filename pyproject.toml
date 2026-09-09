@@ -25,6 +25,9 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "integration: tests requiring real DendroFlow PostgreSQL databases",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
