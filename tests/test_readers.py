@@ -121,3 +121,24 @@ def test_csv_reader_reads_toa5_source_line_numbers():
 
     assert batch.source_line_numbers[0] == 5
     assert batch.source_line_numbers[1] == 6
+
+def test_csv_reader_integer_skiprows_preserves_physical_lines(
+    tmp_path,
+):
+    path = tmp_path / "example.csv"
+
+    path.write_text(
+        "metadata\n"
+        "TIMESTAMP,value\n"
+        "2026-01-01 00:00:00,1\n"
+        "2026-01-01 00:15:00,2\n"
+    )
+
+    reader = CsvReader(
+        skiprows=1,
+        header=0,
+    )
+
+    batch = next(reader.read(path))
+
+    assert batch.source_line_numbers == (3, 4)

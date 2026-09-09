@@ -9,7 +9,9 @@ from dendroflow.ingestion import (
     create_ingestion_run_with_targets,
     finalize_ingestion_run,
     finish_ingestion_run,
-    get_resumable_ingestion_run,
+    get_completed_ingestion_run,
+    get_ingested_interface_ids,
+   get_resumable_ingestion_run,
 )
 
 
@@ -453,3 +455,74 @@ def test_get_resumable_ingestion_run_returns_none(
     )
 
     assert result is None
+
+def test_get_completed_ingestion_run(monkeypatch):
+    now = datetime.now(timezone.utc)
+
+    class FakeResult:
+        def fetchone(self):
+            return (
+                7,
+                now,
+                now,
+                "completed",
+            )
+
+    class FakeConnection:
+        def execute(self, query, params):
+            assert params == (
+                3,
+                [4, 5],
+                2,
+            )
+            return FakeResult()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.runs.connect",
+        lambda database: FakeConnection(),
+    )
+
+    run = get_completed_ingestion_run(
+        file_version_id=3,
+        interface_ids=(4, 5),
+    )
+
+    assert run is not None
+    assert run.ingestion_run_id == 7
+    assert run.status == "completed"
+
+def test_get_ingested_interface_ids(monkeypatch):
+    class FakeResult:
+        def fetchall(self):
+            return [
+                (4,),
+                (5,),
+            ]
+
+    class FakeConnection:
+        def execute(self, query, params):
+            assert params == (3,)
+            return FakeResult()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.runs.connect",
+        lambda database: FakeConnection(),
+    )
+
+    interface_ids = get_ingested_interface_ids(
+        file_version_id=3,
+    )
+
+    assert interface_ids == {4, 5}
