@@ -29,10 +29,13 @@ class CsvReader:
 
         if self.skiprows is None:
             skipped_rows: set[int] = set()
+            skip_first_rows = 0
         elif isinstance(self.skiprows, int):
-            skipped_rows = set(range(self.skiprows))
+            skipped_rows = set()
+            skip_first_rows = self.skiprows
         else:
             skipped_rows = set(self.skiprows)
+            skip_first_rows = 0
 
         skip_blank_lines = self.kwargs.get(
             "skip_blank_lines",
@@ -57,6 +60,9 @@ class CsvReader:
             encoding=encoding,
         ) as file:
             for zero_based_index, line in enumerate(file):
+                if zero_based_index < skip_first_rows:
+                    continue
+                
                 if zero_based_index in skipped_rows:
                     continue
 
