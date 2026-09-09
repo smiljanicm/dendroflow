@@ -4,11 +4,15 @@ from pydantic import ValidationError
 from dendroflow.configuration import (
     ConfigModel,
     DeploymentConfig,
+    FileConfig,
     InitialLocationLabelConfig,
+    InterfaceConfig,
     LocationConfig,
+    ReaderConfig,
     SensorConfig,
     SensorModelConfig,
     SiteConfig,
+    TimestampConfig,
     VariableConfig,
 )
 
@@ -132,3 +136,105 @@ def test_deployment_rejects_invalid_validity():
             valid_from="2025-04-02T00:00:00Z",
             valid_to="2025-04-01T00:00:00Z",
         )
+
+
+def test_file_config_accepts_sandhagen_structure():
+    file = FileConfig(
+        ref="sandhagen_water_table",
+        path="tests/data/Sandhagen_Rewetted_WaterTbl.dat",
+        timestamp={
+            "timezone": "Etc/GMT-1",
+            "format": "%Y-%m-%d %H:%M:%S",
+        },
+        reader={
+            "type": "csv",
+            "options": {
+                "skiprows": [0, 2, 3],
+                "delimiter": ",",
+            },
+        },
+        interfaces=[
+            {
+                "deployment": "water_level_main",
+                "timestamp_column": "TIMESTAMP",
+                "values_column": "Lvl_cm_Avg",
+                "unit": "cm",
+            }
+        ],
+    )
+
+    assert file.timestamp.timezone == "Etc/GMT-1"
+    assert file.reader.type == "csv"
+    assert file.reader.options["skiprows"] == [0, 2, 3]
+    assert file.interfaces[0].deployment == "water_level_main"
+
+
+def test_timestamp_config_rejects_unknown_timezone():
+    with pytest.raises(
+        ValidationError,
+        match="unknown timezone",
+    ):
+        TimestampConfig(
+            timezone="Not/A/Timezone",
+            format="%Y-%m-%d %H:%M:%S",
+        )
+
+
+def test_reader_config_rejects_unsupported_reader():
+    with pytest.raises(ValidationError):
+        ReaderConfig(
+            type="parquet",
+        )
+
+
+def test_file_config_requires_interface():
+    with pytest.raises(ValidationError):
+        FileConfig(
+            path="data.csv",
+            timestamp={
+                "timezone": "UTC",
+                "format": "%Y-%m-%d %H:%M:%S",
+            },
+            reader={
+                "type": "csv",
+            },
+            interfaces=[],
+        )
+
+
+def test_interface_config_rejects_empty_values_column():
+    with pytest.raises(ValidationError):
+        InterfaceConfig(
+            deployment="water_level_main",
+            timestamp_column="TIMESTAMP",
+            values_column="",
+            unit="cm",
+        )
+
+
+def test_config_model_accepts_files():
+    config = ConfigModel(
+        files=[
+            {
+                "path": "data.csv",
+                "timestamp": {
+                    "timezone": "UTC",
+                    "format": "%Y-%m-%d %H:%M:%S",
+                },
+                "reader": {
+                    "type": "csv",
+                },
+                "interfaces": [
+                    {
+                        "deployment": "water_level_main",
+                        "timestamp_column": "TIMESTAMP",
+                        "values_column": "value",
+                        "unit": "cm",
+                    }
+                ],
+            }
+        ]
+    )
+
+    assert len(config.files) == 1
+

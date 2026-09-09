@@ -1,4 +1,6 @@
 from datetime import datetime
+from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -153,6 +155,43 @@ class DeploymentConfig(ConfigBaseModel):
         return self
 
 
+class TimestampConfig(ConfigBaseModel):
+    timezone: str = Field(min_length=1)
+    format: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_timezone(self) -> "TimestampConfig":
+        try:
+            ZoneInfo(self.timezone)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError(
+                f"unknown timezone: {self.timezone}"
+            ) from exc
+
+        return self
+
+
+class ReaderConfig(ConfigBaseModel):
+    type: Literal["csv"]
+    options: dict[str, object] = Field(default_factory=dict)
+
+
+class InterfaceConfig(ConfigBaseModel):
+    deployment: str = Field(min_length=1)
+    timestamp_column: str = Field(min_length=1)
+    values_column: str = Field(min_length=1)
+    unit: str = Field(min_length=1)
+
+
+class FileConfig(ConfigBaseModel):
+    path: str = Field(min_length=1)
+    timestamp: TimestampConfig
+    reader: ReaderConfig
+    interfaces: list[InterfaceConfig] = Field(min_length=1)
+
+    ref: str | None = None
+
+
 class ConfigModel(ConfigBaseModel):
     sites: list[SiteConfig] = Field(default_factory=list)
     location_types: list[LocationTypeConfig] = Field(default_factory=list)
@@ -164,3 +203,6 @@ class ConfigModel(ConfigBaseModel):
     locations: list[LocationConfig] = Field(default_factory=list)
     location_labels: list[LocationLabelConfig] = Field(default_factory=list)
     deployments: list[DeploymentConfig] = Field(default_factory=list)
+
+    files: list[FileConfig] = Field(default_factory=list)
+
