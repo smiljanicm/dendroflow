@@ -16,8 +16,10 @@ The initial development focuses on:
 - data cleaning and transformation
 - configuration-driven processing
 
-## Development
+## Documentation
 
-DendroFlow is developed as an open-source Python project.
+- [Data architecture](docs/data-architecture.md) — overall METADATA, RAW, and CLEAN data model
+- [RAW ingestion](docs/raw-ingestion.md) — file versioning, provenance, batching, retries, and resume behavior
+- [Database migrations](docs/database-migrations.md) — migration structure and execution
 
-The project is currently in its initial development phase. Architecture, data models, and processing workflows will be documented as they are established.
+DendroFlow is under active development. Documentation is updated as individual architectural components reach a stable implementation.
