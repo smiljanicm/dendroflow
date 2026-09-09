@@ -4,12 +4,12 @@ import pandas as pd
 import pytest
 
 from dendroflow.ingestion import (
-    NormalizedObservation,
     Deployment,
     FileFingerprint,
     FileVersion,
     IngestionBatch,
     IngestionRun,
+    NormalizedObservation,
     SourceFile,
     SourceInterface,
     ingest_file,

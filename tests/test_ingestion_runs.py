@@ -9,10 +9,9 @@ from dendroflow.ingestion import (
     create_ingestion_run_with_targets,
     finalize_ingestion_run,
     finish_ingestion_run,
-    get_completed_ingestion_run,
-    get_ingested_interface_ids,
     get_resumable_ingestion_run,
 )
+
 
 def test_create_ingestion_run(monkeypatch):
     started_at = datetime(

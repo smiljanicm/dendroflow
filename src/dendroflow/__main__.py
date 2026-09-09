@@ -11,7 +11,7 @@ def migrate() -> None:
 
         try:
             applied_versions = migrate_database(database)
-        except Exception as error:
+        except Exception as error: # noqa: BLE001 - CLI boundary reports migration failures
             print(f"  Migration failed: {error}", file=sys.stderr)
             raise SystemExit(1)
 

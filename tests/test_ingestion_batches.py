@@ -14,6 +14,7 @@ from dendroflow.ingestion import (
 )
 from dendroflow.tabular import TabularBatch
 
+
 def test_create_ingestion_batch(monkeypatch):
     class FakeResult:
         def fetchone(self):

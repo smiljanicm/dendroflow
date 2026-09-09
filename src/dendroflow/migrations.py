@@ -1,9 +1,8 @@
-from pathlib import Path
 import os
 import re
+from pathlib import Path
 
 from dendroflow.database import connect
-
 
 MIGRATION_FILENAME_PATTERN = re.compile(r"^\d{3}_[a-z0-9_]+\.sql$")
 

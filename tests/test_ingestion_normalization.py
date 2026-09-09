@@ -1,18 +1,17 @@
-from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
-import pytest
 
 from dendroflow.ingestion import (
     Deployment,
-    NormalizedObservation,
     SourceFile,
     SourceInterface,
     normalize_batch,
 )
 from dendroflow.tabular import TabularBatch
+
 
 def test_normalize_batch():
     batch = TabularBatch(

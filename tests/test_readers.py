@@ -4,6 +4,7 @@ import pytest
 
 from dendroflow.readers import CsvReader, reader_from_config
 
+
 def test_csv_reader_reads_single_dataframe(tmp_path):
     path = tmp_path / "example.csv"
 
@@ -95,7 +96,7 @@ def test_reader_from_config_rejects_unknown_reader():
     with pytest.raises(ValueError, match="Unsupported reader type"):
         reader_from_config(config)
 
-def test_csv_reader_reads_toa5_data():
+def test_csv_reader_reads_toa5_source_line_numbers():
     path = DATA_DIR / "Sandhagen_Rewetted_WaterTbl.dat"
 
     reader = CsvReader(

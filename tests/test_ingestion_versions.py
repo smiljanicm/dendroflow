@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import hashlib
 
 from dendroflow.ingestion import (
@@ -8,6 +6,7 @@ from dendroflow.ingestion import (
     fingerprint_file,
     get_or_create_file_version,
 )
+
 
 def test_fingerprint_file(tmp_path):
     content = b"DendroFlow\nexample\n"

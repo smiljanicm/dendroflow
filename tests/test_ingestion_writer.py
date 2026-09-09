@@ -8,6 +8,7 @@ from dendroflow.ingestion import (
     write_ingestion_batch,
 )
 
+
 def test_write_ingestion_batch_uses_one_transaction(
     monkeypatch,
 ):

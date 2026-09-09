@@ -2,7 +2,6 @@ import psycopg
 
 from dendroflow.config import get_connection_parameters
 
-
 DATABASES = (
     "dendroflow_metadata",
     "dendroflow_raw",
