@@ -294,3 +294,114 @@ def test_validation_does_not_resolve_reference_lookup_fields_locally():
 
     validate_config(config)
 
+
+def test_validation_rejects_label_starting_with_initial_label():
+    config = ConfigModel(
+        sites=[
+            {
+                "ref": "site",
+                "site_code": "site",
+                "name": "Site",
+            }
+        ],
+        location_types=[
+            {
+                "ref": "well",
+                "type": "well",
+            }
+        ],
+        locations=[
+            {
+                "ref": "well_01",
+                "site": "site",
+                "location_type": "well",
+                "initial_label": {
+                    "label": "Well 01",
+                    "valid_from": "2025-01-01T00:00:00Z",
+                },
+            }
+        ],
+        location_labels=[
+            {
+                "location": "well_01",
+                "label": "Other label",
+                "valid_from": "2025-01-01T00:00:00Z",
+            }
+        ],
+    )
+
+    with pytest.raises(
+        ConfigValidationError,
+        match="another label for this location starts at the same time",
+    ):
+        validate_config(config)
+
+
+def test_validation_rejects_duplicate_interface_mapping():
+    config = ConfigModel(
+        references={
+            "deployments": {
+                "water_level_main": {
+                    "sensor": "123456",
+                }
+            }
+        },
+        files=[
+            {
+                "path": "data.csv",
+                "timestamp": {
+                    "timezone": "UTC",
+                    "format": "%Y-%m-%d %H:%M:%S",
+                },
+                "reader": {"type": "csv"},
+                "interfaces": [
+                    {
+                        "deployment": "water_level_main",
+                        "timestamp_column": "TIMESTAMP",
+                        "values_column": "value",
+                        "unit": "cm",
+                    },
+                    {
+                        "deployment": "water_level_main",
+                        "timestamp_column": "TIMESTAMP",
+                        "values_column": "value",
+                        "unit": "mm",
+                    },
+                ],
+            }
+        ],
+    )
+
+    with pytest.raises(
+        ConfigValidationError,
+        match="duplicate interface mapping",
+    ):
+        validate_config(config)
+
+
+def test_validation_accepts_deployment_update_relationship_alias():
+    config = ConfigModel(
+        references={
+            "sensors": {
+                "replacement_sensor": {
+                    "serial_number": "NEW123",
+                }
+            }
+        },
+        updates={
+            "deployments": [
+                {
+                    "update": {
+                        "sensor": "OLD123",
+                    },
+                    "set": {
+                        "sensor": "replacement_sensor",
+                    },
+                }
+            ]
+        },
+    )
+
+    validate_config(config)
+
+
