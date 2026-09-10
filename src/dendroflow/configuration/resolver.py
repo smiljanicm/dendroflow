@@ -11,6 +11,7 @@ from .plan import (
     PlanErrorCode,
     PlannedRef,
     ResolvedLocationTypeValues,
+    ResolvedLocationValues,
     ResolvedPlanItem,
     ResolvedSensorModelValues,
     ResolvedSensorTypeValues,
@@ -646,7 +647,7 @@ def _conflict(
     )
 
 
-# Metadata resolutions
+# Metadata resolutions for sensors
 
 
 def resolve_sensor_model_reference_aliases(
@@ -1085,4 +1086,292 @@ def resolve_sensor_declarations(
             )
 
     return tuple(items), tuple(bindings), tuple(errors)
+
+
+# Metadata resolutions for locations
+
+
+def resolve_location_reference_aliases(
+    registry: AliasRegistry,
+    existing_bindings: tuple[PlanBinding, ...] = (),
+) -> tuple[tuple[PlanBinding, ...], tuple[PlanError, ...]]:
+    """Resolve location reference aliases against PostgreSQL."""
+
+    bindings: list[PlanBinding] = []
+    errors: list[PlanError] = []
+
+    for entry in registry.entries:
+        if not isinstance(entry, ReferenceAlias):
+            continue
+
+        if entry.resource_type != "locations":
+            continue
+
+        site_id: int | None = None
+
+        if entry.selector.site is not None:
+            site_binding = _find_binding(
+                existing_bindings,
+                "sites",
+                entry.selector.site,
+            )
+
+            if site_binding is None:
+                errors.append(
+                    PlanError(
+                        code=PlanErrorCode.INVALID_REFERENCE,
+                        resource_type="locations",
+                        source_path=f"{entry.source_path}.site",
+                        message=(
+                            "unable to resolve site "
+                            f"{entry.selector.site!r}"
+                        ),
+                    )
+                )
+                continue
+
+            if isinstance(site_binding.resource, PlannedRef):
+                errors.append(
+                    PlanError(
+                        code=PlanErrorCode.INVALID_REFERENCE,
+                        resource_type="locations",
+                        source_path=f"{entry.source_path}.site",
+                        message=(
+                            "existing location reference cannot use "
+                            "a site that is planned for creation"
+                        ),
+                    )
+                )
+                continue
+
+            site_id = site_binding.resource.database_id
+
+        rows = metadata.find_locations(
+            site_id=site_id,
+            initial_label=entry.selector.initial_label,
+        )
+
+        if not rows:
+            errors.append(
+                PlanError(
+                    code=PlanErrorCode.NOT_FOUND,
+                    resource_type="locations",
+                    source_path=entry.source_path,
+                    message="location resource not found",
+                )
+            )
+            continue
+
+        if len(rows) > 1:
+            errors.append(
+                PlanError(
+                    code=PlanErrorCode.AMBIGUOUS,
+                    resource_type="locations",
+                    source_path=entry.source_path,
+                    message=(
+                        "location reference matched multiple resources"
+                    ),
+                    candidate_ids=tuple(
+                        row.database_id for row in rows
+                    ),
+                )
+            )
+            continue
+
+        bindings.append(
+            PlanBinding(
+                resource_type="locations",
+                alias=entry.alias,
+                resource=ExistingRef(
+                    resource_type="location",
+                    database_id=rows[0].database_id,
+                ),
+            )
+        )
+
+    return tuple(bindings), tuple(errors)
+
+
+def resolve_location_declarations(
+    config: ConfigModel,
+    existing_bindings: tuple[PlanBinding, ...] = (),
+) -> tuple[
+    tuple[ResolvedPlanItem, ...],
+    tuple[PlanBinding, ...],
+    tuple[PlanError, ...],
+]:
+    """Resolve location declarations against PostgreSQL."""
+
+    items: list[ResolvedPlanItem] = []
+    bindings: list[PlanBinding] = []
+    errors: list[PlanError] = []
+
+    for index, declaration in enumerate(config.locations):
+        plan_id = f"locations[{index}]"
+
+        site_binding = _find_binding(
+            existing_bindings,
+            "sites",
+            declaration.site,
+        )
+        location_type_binding = _find_binding(
+            existing_bindings,
+            "location_types",
+            declaration.location_type,
+        )
+
+        if site_binding is None:
+            errors.append(
+                PlanError(
+                    code=PlanErrorCode.INVALID_REFERENCE,
+                    resource_type="location",
+                    source_path=f"{plan_id}.site",
+                    message=(
+                        f"unable to resolve site {declaration.site!r}"
+                    ),
+                )
+            )
+
+        if location_type_binding is None:
+            errors.append(
+                PlanError(
+                    code=PlanErrorCode.INVALID_REFERENCE,
+                    resource_type="location",
+                    source_path=f"{plan_id}.location_type",
+                    message=(
+                        "unable to resolve location type "
+                        f"{declaration.location_type!r}"
+                    ),
+                )
+            )
+
+        if site_binding is None or location_type_binding is None:
+            continue
+
+        requested_site = site_binding.resource
+        requested_location_type = location_type_binding.resource
+
+        if isinstance(requested_site, PlannedRef):
+            rows = ()
+        else:
+            rows = metadata.find_locations(
+                site_id=requested_site.database_id,
+                initial_label=declaration.initial_label.label,
+            )
+
+        if len(rows) > 1:
+            errors.append(
+                PlanError(
+                    code=PlanErrorCode.AMBIGUOUS,
+                    resource_type="location",
+                    source_path=plan_id,
+                    message=(
+                        "location natural identity matched "
+                        "multiple resources"
+                    ),
+                    candidate_ids=tuple(
+                        row.database_id for row in rows
+                    ),
+                )
+            )
+            continue
+
+        row = rows[0] if rows else None
+
+        if row is None:
+            values = ResolvedLocationValues(
+                site=requested_site,
+                location_type=requested_location_type,
+                latitude=declaration.latitude,
+                longitude=declaration.longitude,
+                height_above_ground=declaration.height_above_ground,
+                azimuth=declaration.azimuth,
+            )
+
+            item = ResolvedPlanItem(
+                plan_id=plan_id,
+                resource_type="location",
+                action=PlanAction.CREATE,
+                values=values,
+                source_path=plan_id,
+            )
+
+            resource: ResourceRef = PlannedRef(
+                resource_type="location",
+                plan_id=plan_id,
+            )
+
+        else:
+            existing_location_type = ExistingRef(
+                resource_type="location_type",
+                database_id=row.values["location_type_id"],
+            )
+
+            if requested_location_type != existing_location_type:
+                errors.append(
+                    _conflict(
+                        plan_id,
+                        "location",
+                        "location_type",
+                        existing_location_type,
+                        requested_location_type,
+                    )
+                )
+
+            errors.extend(
+                _compare_explicit_fields(
+                    declaration,
+                    row,
+                    (
+                        "latitude",
+                        "longitude",
+                        "height_above_ground",
+                        "azimuth",
+                    ),
+                    plan_id,
+                    "location",
+                )
+            )
+
+            values = ResolvedLocationValues(
+                site=ExistingRef(
+                    resource_type="site",
+                    database_id=row.values["site_id"],
+                ),
+                location_type=existing_location_type,
+                latitude=row.values["latitude"],
+                longitude=row.values["longitude"],
+                height_above_ground=row.values[
+                    "height_above_ground"
+                ],
+                azimuth=row.values["azimuth"],
+            )
+
+            item = ResolvedPlanItem(
+                plan_id=plan_id,
+                resource_type="location",
+                action=PlanAction.REUSE,
+                database_id=row.database_id,
+                values=values,
+                source_path=plan_id,
+            )
+
+            resource = ExistingRef(
+                resource_type="location",
+                database_id=row.database_id,
+            )
+
+        items.append(item)
+
+        if declaration.ref is not None:
+            bindings.append(
+                PlanBinding(
+                    resource_type="locations",
+                    alias=declaration.ref,
+                    resource=resource,
+                )
+            )
+
+    return tuple(items), tuple(bindings), tuple(errors)
+
 

@@ -11,6 +11,7 @@ from dendroflow.configuration.resolver import (
     PlanBinding,
     ReferenceAlias,
     build_alias_registry,
+    resolve_location_declarations,
     resolve_sensor_declarations,
     resolve_sensor_model_declarations,
     resolve_sensor_model_reference_aliases,
@@ -1012,4 +1013,68 @@ def test_existing_sensor_becomes_reuse(monkeypatch):
         resource_type="sensor",
         database_id=7,
     )
+
+
+def test_new_location_with_planned_site_does_not_query_database(
+    monkeypatch,
+):
+    config = ConfigModel(
+        locations=[
+            {
+                "ref": "well_01",
+                "site": "new_site",
+                "location_type": "well",
+                "initial_label": {
+                    "label": "Well 01",
+                    "valid_from": "2025-01-01T00:00:00Z",
+                },
+            }
+        ]
+    )
+
+    existing_bindings = (
+        PlanBinding(
+            resource_type="sites",
+            alias="new_site",
+            resource=PlannedRef(
+                resource_type="site",
+                plan_id="sites[0]",
+            ),
+        ),
+        PlanBinding(
+            resource_type="location_types",
+            alias="well",
+            resource=ExistingRef(
+                resource_type="location_type",
+                database_id=2,
+            ),
+        ),
+    )
+
+    called = False
+
+    def fake_find_locations(**kwargs):
+        nonlocal called
+        called = True
+        return ()
+
+    monkeypatch.setattr(
+        metadata,
+        "find_locations",
+        fake_find_locations,
+    )
+
+    items, bindings, errors = resolve_location_declarations(
+        config,
+        existing_bindings=existing_bindings,
+    )
+
+    assert errors == ()
+    assert not called
+    assert items[0].action == PlanAction.CREATE
+    assert bindings[0].resource == PlannedRef(
+        resource_type="location",
+        plan_id="locations[0]",
+    )
+
 
