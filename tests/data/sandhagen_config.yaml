@@ -1,0 +1,87 @@
+# Sandhagen CONFIG test fixture.
+# Metadata marked TEST is synthetic and exists only for CONFIG tests.
+
+sites:
+  - ref: sandhagen
+    site_code: sandhagen_rewetted
+    name: Sandhagen Rewetted
+
+location_types:
+  - ref: well
+    type: well
+    description: Water-table monitoring location
+
+sensor_types:
+  - ref: water_table_logger
+    type: water_table_logger
+    description: Water-level and temperature sensor
+
+variables:
+  - ref: water_level
+    variable: water_level
+    description: Water level
+
+  - ref: water_temperature
+    variable: water_temperature
+    description: Water temperature
+
+sensor_models:
+  - ref: sandhagen_sensor_model
+    manufacturer: TEST Manufacturer
+    model: TEST Model
+    sensor_type: water_table_logger
+
+sensors:
+  - ref: sandhagen_sensor
+    serial_number: TEST-SANDHAGEN-001
+    sensor_model: sandhagen_sensor_model
+    description: Test sensor for CONFIG validation
+
+locations:
+  - ref: rewetted_well
+    site: sandhagen
+    location_type: well
+    initial_label:
+      label: Rewetted well
+      valid_from: 2025-04-01T00:00:00Z
+
+deployments:
+  - ref: water_level_main
+    sensor: sandhagen_sensor
+    location: rewetted_well
+    variable: water_level
+    valid_from: 2025-04-01T00:00:00Z
+
+  - ref: water_temperature_main
+    sensor: sandhagen_sensor
+    location: rewetted_well
+    variable: water_temperature
+    valid_from: 2025-04-01T00:00:00Z
+
+files:
+  - ref: sandhagen_water_table
+    path: tests/data/Sandhagen_Rewetted_WaterTbl.dat
+
+    timestamp:
+      timezone: Etc/GMT-1
+      format: "%Y-%m-%d %H:%M:%S"
+
+    reader:
+      type: csv
+      options:
+        skiprows: [0, 2, 3]
+        delimiter: ","
+        encoding: utf-8
+        na_values:
+          - NAN
+
+    interfaces:
+      - deployment: water_level_main
+        timestamp_column: TIMESTAMP
+        values_column: Lvl_cm_Avg
+        unit: cm
+
+      - deployment: water_temperature_main
+        timestamp_column: TIMESTAMP
+        values_column: Temp_C_Avg
+        unit: degC

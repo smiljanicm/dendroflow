@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from dendroflow.configuration import ConfigParseError, load_config
+from dendroflow.configuration import ConfigParseError, load_config, validate_config
 
 
 def write_config(tmp_path: Path, content: str) -> Path:
@@ -106,4 +106,20 @@ def test_load_config_rejects_empty_file(tmp_path):
         match="configuration root must be a YAML mapping",
     ):
         load_config(path)
+
+
+def test_load_and_validate_sandhagen_config():
+    path = Path("tests/data/sandhagen_config.yaml")
+
+    config = load_config(path)
+    validate_config(config)
+
+    assert len(config.sites) == 1
+    assert len(config.sensors) == 1
+    assert len(config.deployments) == 2
+    assert len(config.files) == 1
+    assert len(config.files[0].interfaces) == 2
+
+    assert config.files[0].timestamp.timezone == "Etc/GMT-1"
+    assert config.files[0].reader.options["skiprows"] == [0, 2, 3]
 
