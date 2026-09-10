@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 
 from dendroflow.database import connect
 
@@ -343,6 +344,73 @@ def find_location_labels(
                 "label": row[2],
                 "valid_from": row[3],
                 "valid_to": row[4],
+            },
+        )
+        for row in rows
+    )
+
+
+def find_deployments(
+    *,
+    sensor_id: int | None = None,
+    location_id: int | None = None,
+    variable_id: int | None = None,
+    valid_from: datetime | None = None,
+) -> tuple[MetadataRow, ...]:
+    """Find deployments matching the supplied identifying fields."""
+
+    conditions: list[str] = []
+    parameters: list[object] = []
+
+    if sensor_id is not None:
+        conditions.append("sensor_id = %s")
+        parameters.append(sensor_id)
+
+    if location_id is not None:
+        conditions.append("location_id = %s")
+        parameters.append(location_id)
+
+    if variable_id is not None:
+        conditions.append("variable_id = %s")
+        parameters.append(variable_id)
+
+    if valid_from is not None:
+        conditions.append("valid_from = %s")
+        parameters.append(valid_from)
+
+    if not conditions:
+        raise ValueError(
+            "deployment lookup requires at least one identifying field"
+        )
+
+    where_clause = " AND ".join(conditions)
+
+    with connect("dendroflow_metadata") as connection:
+        rows = connection.execute(
+            f"""
+            SELECT
+                deployment_id,
+                sensor_id,
+                location_id,
+                variable_id,
+                valid_from,
+                valid_to
+            FROM deployments
+            WHERE {where_clause}
+            ORDER BY deployment_id
+            """,
+            tuple(parameters),
+        ).fetchall()
+
+    return tuple(
+        MetadataRow(
+            database_id=row[0],
+            values={
+                "sensor_id": row[1],
+                "location_id": row[2],
+                "variable_id": row[3],
+                "valid_from": row[4],
+                "valid_to": row[5],
             },
         )
         for row in rows

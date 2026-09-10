@@ -485,3 +485,136 @@ def test_find_location_labels_requires_positive_location_id():
     ):
         metadata.find_location_labels(0)
 
+
+def test_find_deployments_by_exact_identity(monkeypatch):
+    valid_from = "2025-04-01T00:00:00+00:00"
+
+    connection = FakeConnection(
+        [
+            (
+                12,
+                5,
+                3,
+                7,
+                valid_from,
+                None,
+            )
+        ]
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "connect",
+        lambda database: connection,
+    )
+
+    result = metadata.find_deployments(
+        sensor_id=5,
+        location_id=3,
+        variable_id=7,
+        valid_from=valid_from,
+    )
+
+    assert len(result) == 1
+    assert result[0].database_id == 12
+    assert result[0].values == {
+        "sensor_id": 5,
+        "location_id": 3,
+        "variable_id": 7,
+        "valid_from": valid_from,
+        "valid_to": None,
+    }
+
+    assert connection.parameters == (
+        5,
+        3,
+        7,
+        valid_from,
+    )
+    assert "ORDER BY deployment_id" in connection.query
+
+
+def test_find_deployments_by_sensor_and_variable_can_return_history(
+    monkeypatch,
+):
+    connection = FakeConnection(
+        [
+            (
+                12,
+                5,
+                3,
+                7,
+                "2025-01-01T00:00:00+00:00",
+                "2026-01-01T00:00:00+00:00",
+            ),
+            (
+                13,
+                5,
+                4,
+                7,
+                "2026-01-01T00:00:00+00:00",
+                None,
+            ),
+        ]
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "connect",
+        lambda database: connection,
+    )
+
+    result = metadata.find_deployments(
+        sensor_id=5,
+        variable_id=7,
+    )
+
+    assert len(result) == 2
+    assert connection.parameters == (5, 7)
+
+
+def test_find_deployments_with_partial_selector_can_return_multiple(
+    monkeypatch,
+):
+    connection = FakeConnection(
+        [
+            (
+                12,
+                5,
+                3,
+                7,
+                "2025-01-01T00:00:00+00:00",
+                None,
+            ),
+            (
+                14,
+                8,
+                3,
+                9,
+                "2025-06-01T00:00:00+00:00",
+                None,
+            ),
+        ]
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "connect",
+        lambda database: connection,
+    )
+
+    result = metadata.find_deployments(
+        location_id=3,
+    )
+
+    assert len(result) == 2
+    assert connection.parameters == (3,)
+
+
+def test_find_deployments_requires_selector():
+    with pytest.raises(
+        ValueError,
+        match="requires at least one identifying field",
+    ):
+        metadata.find_deployments()
+
