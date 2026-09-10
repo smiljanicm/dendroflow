@@ -20,6 +20,7 @@ from dendroflow.configuration.resolver import (
     resolve_location_declarations,
     resolve_location_label_declarations,
     resolve_location_reference_aliases,
+    resolve_metadata_config,
     resolve_sensor_declarations,
     resolve_sensor_model_declarations,
     resolve_sensor_model_reference_aliases,
@@ -2604,5 +2605,447 @@ def test_deployment_missing_relationship_bindings_reports_all_errors(
         "deployments[0].location",
         "deployments[0].variable",
     }
+
+
+def test_resolve_metadata_config_empty_config():
+    plan = resolve_metadata_config(ConfigModel())
+
+    assert plan.metadata_items == ()
+    assert plan.raw_items == ()
+    assert plan.bindings == ()
+    assert plan.errors == ()
+    assert plan.warnings == ()
+    assert plan.can_apply
+
+
+def test_resolve_metadata_config_planned_dependency_chain(
+    monkeypatch,
+):
+    config = ConfigModel(
+        sites=[
+            {
+                "ref": "sandhagen",
+                "site_code": "SAN",
+                "name": "Sandhagen",
+            }
+        ],
+        location_types=[
+            {
+                "ref": "well",
+                "type": "well",
+            }
+        ],
+        sensor_types=[
+            {
+                "ref": "pressure",
+                "type": "pressure",
+            }
+        ],
+        variables=[
+            {
+                "ref": "water_level",
+                "variable": "water_level",
+            }
+        ],
+        sensor_models=[
+            {
+                "ref": "cs451",
+                "manufacturer": "Campbell Scientific",
+                "model": "CS451",
+                "sensor_type": "pressure",
+            }
+        ],
+        sensors=[
+            {
+                "ref": "sensor_01",
+                "sensor_model": "cs451",
+                "serial_number": "123456",
+            }
+        ],
+        locations=[
+            {
+                "ref": "well_01",
+                "site": "sandhagen",
+                "location_type": "well",
+                "initial_label": {
+                    "label": "Well 01",
+                    "valid_from": "2025-04-01T00:00:00Z",
+                },
+            }
+        ],
+        deployments=[
+            {
+                "ref": "deployment_01",
+                "sensor": "sensor_01",
+                "location": "well_01",
+                "variable": "water_level",
+                "valid_from": "2025-04-01T00:00:00Z",
+            }
+        ],
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_site",
+        lambda site_code: None,
+    )
+    monkeypatch.setattr(
+        metadata,
+        "find_location_type",
+        lambda type_: None,
+    )
+    monkeypatch.setattr(
+        metadata,
+        "find_sensor_type",
+        lambda type_: None,
+    )
+    monkeypatch.setattr(
+        metadata,
+        "find_variable",
+        lambda variable: None,
+    )
+    monkeypatch.setattr(
+        metadata,
+        "find_sensor_models",
+        lambda **kwargs: (),
+    )
+    monkeypatch.setattr(
+        metadata,
+        "find_sensors",
+        lambda **kwargs: (),
+    )
+    monkeypatch.setattr(
+        metadata,
+        "find_locations",
+        lambda **kwargs: (),
+    )
+    monkeypatch.setattr(
+        metadata,
+        "find_deployments",
+        lambda **kwargs: (),
+    )
+
+    plan = resolve_metadata_config(config)
+
+    assert plan.errors == ()
+    assert plan.can_apply
+
+    actions = {
+        item.plan_id: item.action
+        for item in plan.metadata_items
+    }
+
+    assert actions == {
+        "sites[0]": PlanAction.CREATE,
+        "location_types[0]": PlanAction.CREATE,
+        "sensor_types[0]": PlanAction.CREATE,
+        "variables[0]": PlanAction.CREATE,
+        "sensor_models[0]": PlanAction.CREATE,
+        "sensors[0]": PlanAction.CREATE,
+        "locations[0]": PlanAction.CREATE,
+        "locations[0].initial_label": PlanAction.CREATE,
+        "deployments[0]": PlanAction.CREATE,
+    }
+
+    deployment = next(
+        item
+        for item in plan.metadata_items
+        if item.plan_id == "deployments[0]"
+    )
+
+    assert deployment.values.sensor == PlannedRef(
+        resource_type="sensor",
+        plan_id="sensors[0]",
+    )
+    assert deployment.values.location == PlannedRef(
+        resource_type="location",
+        plan_id="locations[0]",
+    )
+    assert deployment.values.variable == PlannedRef(
+        resource_type="variable",
+        plan_id="variables[0]",
+    )
+
+
+def test_resolve_metadata_config_existing_roots_with_planned_dependents(
+    monkeypatch,
+):
+    config = ConfigModel(
+        sites=[
+            {
+                "ref": "sandhagen",
+                "site_code": "SAN",
+                "name": "Sandhagen",
+            }
+        ],
+        location_types=[
+            {
+                "ref": "well",
+                "type": "well",
+            }
+        ],
+        sensor_types=[
+            {
+                "ref": "pressure",
+                "type": "pressure",
+            }
+        ],
+        variables=[
+            {
+                "ref": "water_level",
+                "variable": "water_level",
+            }
+        ],
+        sensor_models=[
+            {
+                "ref": "cs451",
+                "manufacturer": "Campbell Scientific",
+                "model": "CS451",
+                "sensor_type": "pressure",
+            }
+        ],
+        sensors=[
+            {
+                "ref": "sensor_01",
+                "sensor_model": "cs451",
+                "serial_number": "123456",
+            }
+        ],
+        locations=[
+            {
+                "ref": "well_01",
+                "site": "sandhagen",
+                "location_type": "well",
+                "initial_label": {
+                    "label": "Well 01",
+                    "valid_from": "2025-04-01T00:00:00Z",
+                },
+            }
+        ],
+        deployments=[
+            {
+                "ref": "deployment_01",
+                "sensor": "sensor_01",
+                "location": "well_01",
+                "variable": "water_level",
+                "valid_from": "2025-04-01T00:00:00Z",
+            }
+        ],
+    )
+
+    # Existing simple resources.
+    monkeypatch.setattr(
+        metadata,
+        "find_site",
+        lambda site_code: MetadataRow(
+            database_id=1,
+            values={
+                "site_code": "SAN",
+                "name": "Sandhagen",
+                "description": None,
+                "latitude": None,
+                "longitude": None,
+                "parent_id": None,
+            },
+        ),
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_location_type",
+        lambda type_: MetadataRow(
+            database_id=2,
+            values={
+                "type": "well",
+                "description": None,
+            },
+        ),
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_variable",
+        lambda variable: MetadataRow(
+            database_id=7,
+            values={
+                "variable": "water_level",
+                "derived": False,
+                "description": None,
+            },
+        ),
+    )
+
+    # New resources.
+    monkeypatch.setattr(
+        metadata,
+        "find_sensor_type",
+        lambda type_: None,
+    )
+    monkeypatch.setattr(
+        metadata,
+        "find_sensor_models",
+        lambda **kwargs: (),
+    )
+    monkeypatch.setattr(
+        metadata,
+        "find_sensors",
+        lambda **kwargs: (),
+    )
+    monkeypatch.setattr(
+        metadata,
+        "find_locations",
+        lambda **kwargs: (),
+    )
+    monkeypatch.setattr(
+        metadata,
+        "find_deployments",
+        lambda **kwargs: (),
+    )
+
+    plan = resolve_metadata_config(config)
+
+    assert plan.errors == ()
+    assert plan.can_apply
+
+    actions = {
+        item.plan_id: item.action
+        for item in plan.metadata_items
+    }
+
+    assert actions == {
+        "sites[0]": PlanAction.REUSE,
+        "location_types[0]": PlanAction.REUSE,
+        "sensor_types[0]": PlanAction.CREATE,
+        "variables[0]": PlanAction.REUSE,
+        "sensor_models[0]": PlanAction.CREATE,
+        "sensors[0]": PlanAction.CREATE,
+        "locations[0]": PlanAction.CREATE,
+        "locations[0].initial_label": PlanAction.CREATE,
+        "deployments[0]": PlanAction.CREATE,
+    }
+
+
+def test_resolve_metadata_config_propagates_resolution_errors(
+    monkeypatch,
+):
+    config = ConfigModel(
+        references={
+            "sensors": {
+                "missing_sensor": {
+                    "serial_number": "DOES_NOT_EXIST",
+                }
+            },
+            "locations": {
+                "well_01": {
+                    "initial_label": "Well 01",
+                }
+            },
+            "variables": {
+                "water_level": {
+                    "variable": "water_level",
+                }
+            },
+        },
+        deployments=[
+            {
+                "sensor": "missing_sensor",
+                "location": "well_01",
+                "variable": "water_level",
+                "valid_from": "2025-04-01T00:00:00Z",
+            }
+        ],
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_sensors",
+        lambda **kwargs: (),
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_locations",
+        lambda **kwargs: (
+            MetadataRow(
+                database_id=3,
+                values={
+                    "site_id": 1,
+                    "location_type_id": 2,
+                    "latitude": None,
+                    "longitude": None,
+                    "height_above_ground": None,
+                    "azimuth": None,
+                    "initial_label": "Well 01",
+                    "initial_label_valid_from": None,
+                    "initial_label_valid_to": None,
+                },
+            ),
+        ),
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_variable",
+        lambda variable: MetadataRow(
+            database_id=7,
+            values={
+                "variable": "water_level",
+                "derived": False,
+                "description": None,
+            },
+        ),
+    )
+
+    plan = resolve_metadata_config(config)
+
+    assert not plan.can_apply
+    assert len(plan.errors) == 2
+
+    assert not any(
+         item.resource_type == "deployment"
+         for item in plan.metadata_items
+    )
+    
+    assert {
+        error.code
+        for error in plan.errors
+    } == {
+        PlanErrorCode.NOT_FOUND,
+        PlanErrorCode.INVALID_REFERENCE,
+    }
+
+    not_found = next(
+        error
+        for error in plan.errors
+        if error.code == PlanErrorCode.NOT_FOUND
+    )
+
+    assert not_found.resource_type == "sensors"
+
+    invalid_reference = next(
+        error
+        for error in plan.errors
+        if error.code == PlanErrorCode.INVALID_REFERENCE
+    )
+
+    assert invalid_reference.resource_type == "deployment"
+    assert invalid_reference.source_path == "deployments[0].sensor"
+
+    assert ExistingRef(
+        resource_type="location",
+        database_id=3,
+    ) in {
+        binding.resource
+        for binding in plan.bindings
+    }
+
+    assert ExistingRef(
+        resource_type="variable",
+        database_id=7,
+    ) in {
+        binding.resource
+        for binding in plan.bindings
+    }
+
 
 
