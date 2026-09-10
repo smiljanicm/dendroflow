@@ -125,6 +125,16 @@ def _validate_natural_identities(
         issues,
     )
     _find_duplicate_identities(
+        config.sensors,
+        "sensors",
+        lambda item: (
+            item.sensor_model,
+            item.serial_number,
+        ),
+        "sensor_model + serial_number",
+        issues,
+    )
+    _find_duplicate_identities(
         config.variables,
         "variables",
         lambda item: item.variable,
@@ -136,13 +146,6 @@ def _validate_natural_identities(
         "sensor_models",
         lambda item: (item.manufacturer, item.model),
         "manufacturer + model",
-        issues,
-    )
-    _find_duplicate_identities(
-        config.sensors,
-        "sensors",
-        lambda item: item.serial_number,
-        "serial_number",
         issues,
     )
     _find_duplicate_identities(

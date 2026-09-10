@@ -404,3 +404,62 @@ def test_validation_accepts_deployment_update_relationship_alias():
 
     validate_config(config)
 
+
+def test_validation_allows_same_serial_for_different_models():
+    config = ConfigModel(
+        references={
+            "sensor_models": {
+                "model_a": {
+                    "manufacturer": "A",
+                    "model": "Model",
+                },
+                "model_b": {
+                    "manufacturer": "B",
+                    "model": "Model",
+                },
+            }
+        },
+        sensors=[
+            {
+                "serial_number": "123",
+                "sensor_model": "model_a",
+            },
+            {
+                "serial_number": "123",
+                "sensor_model": "model_b",
+            },
+        ],
+    )
+
+    validate_config(config)
+
+
+def test_validation_rejects_duplicate_sensor_identity():
+    config = ConfigModel(
+        references={
+            "sensor_models": {
+                "model_a": {
+                    "manufacturer": "A",
+                    "model": "Model",
+                }
+            }
+        },
+        sensors=[
+            {
+                "serial_number": "123",
+                "sensor_model": "model_a",
+            },
+            {
+                "serial_number": "123",
+                "sensor_model": "model_a",
+            },
+        ],
+    )
+
+    with pytest.raises(
+        ConfigValidationError,
+        match="duplicate natural identity",
+    ):
+        validate_config(config)
+
+

@@ -12,6 +12,7 @@ from dendroflow.configuration import (
     LocationConfig,
     ReaderConfig,
     SensorConfig,
+    SensorLookupConfig,
     SensorModelConfig,
     SensorUpdateConfig,
     SiteConfig,
@@ -342,4 +343,14 @@ def test_config_defaults_references_and_updates_to_empty():
 
     assert config.references.deployments == {}
     assert config.updates.sensors == []
+
+
+def test_sensor_lookup_accepts_sensor_model():
+    lookup = SensorLookupConfig(
+        serial_number="123456",
+        sensor_model="cs451",
+    )
+
+    assert lookup.serial_number == "123456"
+    assert lookup.sensor_model == "cs451"
 

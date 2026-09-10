@@ -236,6 +236,7 @@ class SensorModelLookupConfig(LookupConfig):
 
 class SensorLookupConfig(LookupConfig):
     serial_number: str | None = None
+    sensor_model: str | None = None
 
 
 class LocationLookupConfig(LookupConfig):
