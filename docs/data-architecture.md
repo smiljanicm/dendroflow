@@ -201,7 +201,7 @@ plot
 building
 ```
 
-`name` is unique.
+`type` is unique.
 
 The separate table provides a controlled vocabulary without hard-coding location types throughout the application.
 
