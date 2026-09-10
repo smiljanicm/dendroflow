@@ -1,4 +1,3 @@
-from collections.abc import Callable
 from dataclasses import dataclass
 
 from . import metadata
@@ -6,9 +5,17 @@ from .metadata import MetadataRow
 from .models import ConfigModel, LookupConfig
 from .plan import (
     ExistingRef,
+    PlanAction,
     PlanBinding,
     PlanError,
     PlanErrorCode,
+    PlannedRef,
+    ResolvedLocationTypeValues,
+    ResolvedPlanItem,
+    ResolvedSensorTypeValues,
+    ResolvedSiteValues,
+    ResolvedVariableValues,
+    ResourceRef,
 )
 
 
@@ -111,20 +118,6 @@ def build_alias_registry(config: ConfigModel) -> AliasRegistry:
             )
 
     return AliasRegistry(entries=tuple(entries))
-
-
-SimpleMetadataFinder = Callable[[str], MetadataRow | None]
-
-
-_SIMPLE_REFERENCE_RESOLVERS: dict[
-    str,
-    tuple[str, SimpleMetadataFinder],
-] = {
-    "sites": ("site_code", metadata.find_site),
-    "location_types": ("type", metadata.find_location_type),
-    "sensor_types": ("type", metadata.find_sensor_type),
-    "variables": ("variable", metadata.find_variable),
-}
 
 
 def resolve_simple_reference_aliases(
@@ -234,6 +227,420 @@ def _find_simple_metadata(
 
     raise ValueError(
         f"unsupported simple metadata resource type: {resource_type}"
+    )
+
+
+# Main functions for resolving simple declarations
+
+
+def resolve_simple_declarations(
+    config: ConfigModel,
+    existing_bindings: tuple[PlanBinding, ...] = (),
+) -> tuple[
+    tuple[ResolvedPlanItem, ...],
+    tuple[PlanBinding, ...],
+    tuple[PlanError, ...],
+]:
+    """Resolve simple METADATA declarations against PostgreSQL."""
+
+    items: list[ResolvedPlanItem] = []
+    bindings: list[PlanBinding] = []
+    errors: list[PlanError] = []
+
+    targets: dict[tuple[str, int], ResourceRef] = {}
+    rows: dict[tuple[str, int], MetadataRow | None] = {}
+
+    resource_types = (
+        "sites",
+        "location_types",
+        "sensor_types",
+        "variables",
+    )
+
+    # Pass 1: determine whether each declaration already exists.
+    for resource_type in resource_types:
+        selector_field = _SIMPLE_REFERENCE_FIELDS[resource_type]
+        declarations = getattr(config, resource_type)
+
+        for index, declaration in enumerate(declarations):
+            key = (resource_type, index)
+            plan_id = f"{resource_type}[{index}]"
+            selector_value = getattr(declaration, selector_field)
+
+            row = _find_simple_metadata(
+                resource_type,
+                selector_value,
+            )
+            rows[key] = row
+
+            if row is None:
+                resource = PlannedRef(
+                    resource_type=_singular_resource_type(
+                        resource_type
+                    ),
+                    plan_id=plan_id,
+                )
+            else:
+                resource = ExistingRef(
+                    resource_type=_singular_resource_type(
+                        resource_type
+                    ),
+                    database_id=row.database_id,
+                )
+
+            targets[key] = resource
+
+            if declaration.ref is not None:
+                bindings.append(
+                    PlanBinding(
+                        resource_type=resource_type,
+                        alias=declaration.ref,
+                        resource=resource,
+                    )
+                )
+
+    all_bindings = existing_bindings + tuple(bindings)
+
+    # Pass 2: build database-oriented plan values.
+    for resource_type in resource_types:
+        declarations = getattr(config, resource_type)
+
+        for index, declaration in enumerate(declarations):
+            key = (resource_type, index)
+            row = rows[key]
+            plan_id = f"{resource_type}[{index}]"
+
+            values, declaration_errors = _build_simple_values(
+                resource_type,
+                declaration,
+                row,
+                all_bindings,
+                plan_id,
+            )
+
+            errors.extend(declaration_errors)
+
+            if values is None:
+                continue
+
+            items.append(
+                ResolvedPlanItem(
+                    plan_id=plan_id,
+                    resource_type=_singular_resource_type(
+                        resource_type
+                    ),
+                    action=(
+                        PlanAction.CREATE
+                        if row is None
+                        else PlanAction.REUSE
+                    ),
+                    database_id=(
+                        None
+                        if row is None
+                        else row.database_id
+                    ),
+                    values=values,
+                    source_path=plan_id,
+                )
+            )
+
+    return tuple(items), tuple(bindings), tuple(errors)
+
+
+def _build_simple_values(
+    resource_type: str,
+    declaration: object,
+    row: MetadataRow | None,
+    bindings: tuple[PlanBinding, ...],
+    source_path: str,
+) -> tuple[object | None, tuple[PlanError, ...]]:
+    if resource_type == "sites":
+        return _build_site_values(
+            declaration,
+            row,
+            bindings,
+            source_path,
+        )
+
+    if resource_type == "location_types":
+        if row is None:
+            return (
+                ResolvedLocationTypeValues(
+                    type=declaration.type,
+                    description=declaration.description,
+                ),
+                (),
+            )
+
+        errors = _compare_explicit_fields(
+            declaration,
+            row,
+            ("description",),
+            source_path,
+            "location_type",
+        )
+
+        return (
+            ResolvedLocationTypeValues(
+                type=row.values["type"],
+                description=row.values["description"],
+            ),
+            errors,
+        )
+
+    if resource_type == "sensor_types":
+        if row is None:
+            return (
+                ResolvedSensorTypeValues(
+                    type=declaration.type,
+                    description=declaration.description,
+                ),
+                (),
+            )
+
+        errors = _compare_explicit_fields(
+            declaration,
+            row,
+            ("description",),
+            source_path,
+            "sensor_type",
+        )
+
+        return (
+            ResolvedSensorTypeValues(
+                type=row.values["type"],
+                description=row.values["description"],
+            ),
+            errors,
+        )
+
+    if resource_type == "variables":
+        if row is None:
+            return (
+                ResolvedVariableValues(
+                    variable=declaration.variable,
+                    derived=declaration.derived,
+                    description=declaration.description,
+                ),
+                (),
+            )
+
+        errors = list(
+            _compare_explicit_fields(
+                declaration,
+                row,
+                ("description",),
+                source_path,
+                "variable",
+            )
+        )
+
+        if declaration.derived != row.values["derived"]:
+            errors.append(
+                _conflict(
+                    source_path,
+                    "variable",
+                    "derived",
+                    row.values["derived"],
+                    declaration.derived,
+                )
+            )
+
+        return (
+            ResolvedVariableValues(
+                variable=row.values["variable"],
+                derived=row.values["derived"],
+                description=row.values["description"],
+            ),
+            tuple(errors),
+        )
+
+    raise ValueError(
+        f"unsupported simple metadata resource type: {resource_type}"
+    )
+
+
+def _build_site_values(
+    declaration: object,
+    row: MetadataRow | None,
+    bindings: tuple[PlanBinding, ...],
+    source_path: str,
+) -> tuple[ResolvedSiteValues | None, tuple[PlanError, ...]]:
+    parent: ResourceRef | None = None
+
+    if declaration.parent is not None:
+        binding = _find_binding(
+            bindings,
+            "sites",
+            declaration.parent,
+        )
+
+        if binding is None:
+            return (
+                None,
+                (
+                    PlanError(
+                        code=PlanErrorCode.INVALID_REFERENCE,
+                        resource_type="site",
+                        source_path=f"{source_path}.parent",
+                        message=(
+                            "unable to resolve site parent "
+                            f"{declaration.parent!r}"
+                        ),
+                    ),
+                ),
+            )
+
+        parent = binding.resource
+
+    if row is None:
+        return (
+            ResolvedSiteValues(
+                site_code=declaration.site_code,
+                name=declaration.name,
+                description=declaration.description,
+                latitude=declaration.latitude,
+                longitude=declaration.longitude,
+                parent=parent,
+            ),
+            (),
+        )
+
+    errors = list(
+        _compare_explicit_fields(
+            declaration,
+            row,
+            (
+                "description",
+                "latitude",
+                "longitude",
+            ),
+            source_path,
+            "site",
+        )
+    )
+
+    if declaration.name != row.values["name"]:
+        errors.append(
+            _conflict(
+                source_path,
+                "site",
+                "name",
+                row.values["name"],
+                declaration.name,
+            )
+        )
+
+    existing_parent_id = row.values["parent_id"]
+
+    if "parent" in declaration.model_fields_set:
+        requested_parent_id = (
+            parent.database_id
+            if isinstance(parent, ExistingRef)
+            else None
+        )
+
+        parent_matches = (
+            isinstance(parent, ExistingRef)
+            and requested_parent_id == existing_parent_id
+        ) or (
+            parent is None
+            and existing_parent_id is None
+        )
+
+        if not parent_matches:
+            errors.append(
+                _conflict(
+                    source_path,
+                    "site",
+                    "parent",
+                    existing_parent_id,
+                    parent,
+                )
+            )
+
+    existing_parent = (
+        ExistingRef(
+            resource_type="site",
+            database_id=existing_parent_id,
+        )
+        if existing_parent_id is not None
+        else None
+    )
+
+    return (
+        ResolvedSiteValues(
+            site_code=row.values["site_code"],
+            name=row.values["name"],
+            description=row.values["description"],
+            latitude=row.values["latitude"],
+            longitude=row.values["longitude"],
+            parent=existing_parent,
+        ),
+        tuple(errors),
+    )
+
+
+def _find_binding(
+    bindings: tuple[PlanBinding, ...],
+    resource_type: str,
+    alias: str,
+) -> PlanBinding | None:
+    for binding in bindings:
+        if (
+            binding.resource_type == resource_type
+            and binding.alias == alias
+        ):
+            return binding
+
+    return None
+
+
+def _compare_explicit_fields(
+    declaration: object,
+    row: MetadataRow,
+    fields: tuple[str, ...],
+    source_path: str,
+    resource_type: str,
+) -> tuple[PlanError, ...]:
+    errors: list[PlanError] = []
+
+    for field in fields:
+        if field not in declaration.model_fields_set:
+            continue
+
+        requested = getattr(declaration, field)
+        existing = row.values[field]
+
+        if requested != existing:
+            errors.append(
+                _conflict(
+                    source_path,
+                    resource_type,
+                    field,
+                    existing,
+                    requested,
+                )
+            )
+
+    return tuple(errors)
+
+
+def _conflict(
+    source_path: str,
+    resource_type: str,
+    field: str,
+    existing: object,
+    requested: object,
+) -> PlanError:
+    return PlanError(
+        code=PlanErrorCode.CONFLICT,
+        resource_type=resource_type,
+        source_path=f"{source_path}.{field}",
+        message=(
+            f"{field} differs from existing resource: "
+            f"existing={existing!r}, requested={requested!r}"
+        ),
     )
 
 

@@ -1,10 +1,16 @@
 from dendroflow.configuration import ConfigModel, metadata, validate_config
 from dendroflow.configuration.metadata import MetadataRow
-from dendroflow.configuration.plan import ExistingRef, PlanErrorCode
+from dendroflow.configuration.plan import (
+    ExistingRef,
+    PlanAction,
+    PlanErrorCode,
+    PlannedRef,
+)
 from dendroflow.configuration.resolver import (
     DeclarationAlias,
     ReferenceAlias,
     build_alias_registry,
+    resolve_simple_declarations,
     resolve_simple_reference_aliases,
 )
 
@@ -275,4 +281,288 @@ def test_simple_reference_resolution_ignores_declarations(
     assert bindings == ()
     assert errors == ()
     assert not called
+
+
+def test_new_variable_becomes_create_and_planned_ref(monkeypatch):
+    config = ConfigModel(
+        variables=[
+            {
+                "ref": "water_level",
+                "variable": "water_level",
+                "description": "Water level",
+            }
+        ]
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_variable",
+        lambda variable: None,
+    )
+
+    items, bindings, errors = resolve_simple_declarations(config)
+
+    assert errors == ()
+    assert len(items) == 1
+    assert items[0].action == PlanAction.CREATE
+    assert items[0].database_id is None
+    assert items[0].values.variable == "water_level"
+
+    assert bindings[0].resource == PlannedRef(
+        resource_type="variable",
+        plan_id="variables[0]",
+    )
+
+
+def test_existing_variable_becomes_reuse_and_existing_ref(monkeypatch):
+    config = ConfigModel(
+        variables=[
+            {
+                "ref": "water_level",
+                "variable": "water_level",
+                "description": "Water level",
+            }
+        ]
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_variable",
+        lambda variable: MetadataRow(
+            database_id=7,
+            values={
+                "variable": variable,
+                "derived": False,
+                "description": "Water level",
+            },
+        ),
+    )
+
+    items, bindings, errors = resolve_simple_declarations(config)
+
+    assert errors == ()
+    assert items[0].action == PlanAction.REUSE
+    assert items[0].database_id == 7
+
+    assert bindings[0].resource == ExistingRef(
+        resource_type="variable",
+        database_id=7,
+    )
+
+
+def test_existing_variable_explicit_description_conflict(monkeypatch):
+    config = ConfigModel(
+        variables=[
+            {
+                "variable": "water_level",
+                "description": "Requested description",
+            }
+        ]
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_variable",
+        lambda variable: MetadataRow(
+            database_id=1,
+            values={
+                "variable": variable,
+                "derived": False,
+                "description": "Existing description",
+            },
+        ),
+    )
+
+    _, _, errors = resolve_simple_declarations(config)
+
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+    assert errors[0].source_path == "variables[0].description"
+
+
+def test_existing_variable_ignores_omitted_description(monkeypatch):
+    config = ConfigModel(
+        variables=[
+            {
+                "variable": "water_level",
+            }
+        ]
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_variable",
+        lambda variable: MetadataRow(
+            database_id=1,
+            values={
+                "variable": variable,
+                "derived": False,
+                "description": "Existing description",
+            },
+        ),
+    )
+
+    items, _, errors = resolve_simple_declarations(config)
+
+    assert errors == ()
+    assert items[0].action == PlanAction.REUSE
+    assert items[0].values.description == "Existing description"
+
+
+def test_existing_variable_derived_difference_is_conflict(monkeypatch):
+    config = ConfigModel(
+        variables=[
+            {
+                "variable": "water_level",
+                "derived": True,
+            }
+        ]
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_variable",
+        lambda variable: MetadataRow(
+            database_id=1,
+            values={
+                "variable": variable,
+                "derived": False,
+                "description": None,
+            },
+        ),
+    )
+
+    _, _, errors = resolve_simple_declarations(config)
+
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+    assert errors[0].source_path == "variables[0].derived"
+
+
+def test_declaration_without_ref_still_creates_plan_item(monkeypatch):
+    config = ConfigModel(
+        location_types=[
+            {
+                "type": "well",
+            }
+        ]
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_location_type",
+        lambda type_: None,
+    )
+
+    items, bindings, errors = resolve_simple_declarations(config)
+
+    assert errors == ()
+    assert len(items) == 1
+    assert items[0].action == PlanAction.CREATE
+    assert bindings == ()
+
+
+def test_new_child_site_can_reference_new_parent(monkeypatch):
+    config = ConfigModel(
+        sites=[
+            {
+                "ref": "parent",
+                "site_code": "parent_site",
+                "name": "Parent",
+            },
+            {
+                "ref": "child",
+                "site_code": "child_site",
+                "name": "Child",
+                "parent": "parent",
+            },
+        ]
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_site",
+        lambda site_code: None,
+    )
+
+    items, bindings, errors = resolve_simple_declarations(config)
+
+    assert errors == ()
+
+    child = items[1]
+
+    assert child.values.parent == PlannedRef(
+        resource_type="site",
+        plan_id="sites[0]",
+    )
+
+    assert len(bindings) == 2
+
+
+def test_existing_child_site_resolves_existing_parent(monkeypatch):
+    config = ConfigModel(
+        references={
+            "sites": {
+                "parent": {
+                    "site_code": "parent_site",
+                }
+            }
+        },
+        sites=[
+            {
+                "site_code": "child_site",
+                "name": "Child",
+                "parent": "parent",
+            }
+        ],
+    )
+
+    registry = build_alias_registry(config)
+
+    monkeypatch.setattr(
+        metadata,
+        "find_site",
+        lambda site_code: (
+            MetadataRow(
+                database_id=10,
+                values={
+                    "site_code": "parent_site",
+                    "name": "Parent",
+                    "description": None,
+                    "latitude": None,
+                    "longitude": None,
+                    "parent_id": None,
+                },
+            )
+            if site_code == "parent_site"
+            else MetadataRow(
+                database_id=20,
+                values={
+                    "site_code": "child_site",
+                    "name": "Child",
+                    "description": None,
+                    "latitude": None,
+                    "longitude": None,
+                    "parent_id": 10,
+                },
+            )
+        ),
+    )
+
+    reference_bindings, reference_errors = (
+        resolve_simple_reference_aliases(registry)
+    )
+
+    assert reference_errors == ()
+
+    items, _, errors = resolve_simple_declarations(
+        config,
+        existing_bindings=reference_bindings,
+    )
+
+    assert errors == ()
+    assert items[0].values.parent == ExistingRef(
+        resource_type="site",
+        database_id=10,
+    )
 
