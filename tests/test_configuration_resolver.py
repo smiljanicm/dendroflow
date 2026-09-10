@@ -3005,7 +3005,7 @@ def test_resolve_metadata_config_propagates_resolution_errors(
          item.resource_type == "deployment"
          for item in plan.metadata_items
     )
-    
+
     assert {
         error.code
         for error in plan.errors
@@ -3045,6 +3045,409 @@ def test_resolve_metadata_config_propagates_resolution_errors(
     ) in {
         binding.resource
         for binding in plan.bindings
+    }
+
+
+def test_resolve_metadata_config_mixed_existing_and_planned_resources(
+    monkeypatch,
+):
+    config = ConfigModel(
+        sites=[
+            {
+                "ref": "sandhagen",
+                "site_code": "SAN",
+                "name": "Sandhagen",
+            }
+        ],
+        location_types=[
+            {
+                "ref": "well",
+                "type": "well",
+            }
+        ],
+        sensor_types=[
+            {
+                "ref": "pressure",
+                "type": "pressure",
+            }
+        ],
+        variables=[
+            {
+                "ref": "water_level",
+                "variable": "water_level",
+            }
+        ],
+        sensor_models=[
+            {
+                "ref": "cs451",
+                "manufacturer": "Campbell Scientific",
+                "model": "CS451",
+                "sensor_type": "pressure",
+            }
+        ],
+        sensors=[
+            {
+                "ref": "sensor_01",
+                "sensor_model": "cs451",
+                "serial_number": "123456",
+            }
+        ],
+        locations=[
+            {
+                "ref": "well_01",
+                "site": "sandhagen",
+                "location_type": "well",
+                "initial_label": {
+                    "label": "Well 01",
+                    "valid_from": "2025-04-01T00:00:00Z",
+                },
+            }
+        ],
+        deployments=[
+            {
+                "ref": "deployment_01",
+                "sensor": "sensor_01",
+                "location": "well_01",
+                "variable": "water_level",
+                "valid_from": "2025-04-01T00:00:00Z",
+            }
+        ],
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_site",
+        lambda site_code: MetadataRow(
+            database_id=1,
+            values={
+                "site_code": "SAN",
+                "name": "Sandhagen",
+                "description": None,
+                "latitude": None,
+                "longitude": None,
+                "parent_id": None,
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        metadata,
+        "find_location_type",
+        lambda type_: MetadataRow(
+            database_id=2,
+            values={
+                "type": "well",
+                "description": None,
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        metadata,
+        "find_variable",
+        lambda variable: MetadataRow(
+            database_id=7,
+            values={
+                "variable": "water_level",
+                "derived": False,
+                "description": None,
+            },
+        ),
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_sensor_type",
+        lambda type_: None,
+    )
+    monkeypatch.setattr(
+        metadata,
+        "find_sensor_models",
+        lambda **kwargs: (),
+    )
+    monkeypatch.setattr(
+        metadata,
+        "find_sensors",
+        lambda **kwargs: (),
+    )
+    monkeypatch.setattr(
+        metadata,
+        "find_locations",
+        lambda **kwargs: (),
+    )
+    monkeypatch.setattr(
+        metadata,
+        "find_deployments",
+        lambda **kwargs: (),
+    )
+
+    plan = resolve_metadata_config(config)
+
+    assert plan.errors == ()
+    assert plan.can_apply
+
+    actions = {
+        item.plan_id: item.action
+        for item in plan.metadata_items
+    }
+
+    assert actions == {
+        "sites[0]": PlanAction.REUSE,
+        "location_types[0]": PlanAction.REUSE,
+        "sensor_types[0]": PlanAction.CREATE,
+        "variables[0]": PlanAction.REUSE,
+        "sensor_models[0]": PlanAction.CREATE,
+        "sensors[0]": PlanAction.CREATE,
+        "locations[0]": PlanAction.CREATE,
+        "locations[0].initial_label": PlanAction.CREATE,
+        "deployments[0]": PlanAction.CREATE,
+    }
+
+    deployment = next(
+        item
+        for item in plan.metadata_items
+        if item.plan_id == "deployments[0]"
+    )
+
+    assert deployment.values.sensor == PlannedRef(
+        resource_type="sensor",
+        plan_id="sensors[0]",
+    )
+    assert deployment.values.location == PlannedRef(
+        resource_type="location",
+        plan_id="locations[0]",
+    )
+    assert deployment.values.variable == ExistingRef(
+        resource_type="variable",
+        database_id=7,
+    )
+
+
+def test_resolve_metadata_config_existing_resources_are_reused(
+    monkeypatch,
+):
+    config = ConfigModel(
+        sites=[
+            {
+                "ref": "sandhagen",
+                "site_code": "SAN",
+                "name": "Sandhagen",
+            }
+        ],
+        location_types=[
+            {
+                "ref": "well",
+                "type": "well",
+            }
+        ],
+        sensor_types=[
+            {
+                "ref": "pressure",
+                "type": "pressure",
+            }
+        ],
+        variables=[
+            {
+                "ref": "water_level",
+                "variable": "water_level",
+            }
+        ],
+        sensor_models=[
+            {
+                "ref": "cs451",
+                "manufacturer": "Campbell Scientific",
+                "model": "CS451",
+                "sensor_type": "pressure",
+            }
+        ],
+        sensors=[
+            {
+                "ref": "sensor_01",
+                "sensor_model": "cs451",
+                "serial_number": "123456",
+            }
+        ],
+        locations=[
+            {
+                "ref": "well_01",
+                "site": "sandhagen",
+                "location_type": "well",
+                "initial_label": {
+                    "label": "Well 01",
+                    "valid_from": "2025-04-01T00:00:00Z",
+                },
+            }
+        ],
+        deployments=[
+            {
+                "ref": "deployment_01",
+                "sensor": "sensor_01",
+                "location": "well_01",
+                "variable": "water_level",
+                "valid_from": "2025-04-01T00:00:00Z",
+            }
+        ],
+    )
+
+    valid_from = config.deployments[0].valid_from
+
+    monkeypatch.setattr(
+        metadata,
+        "find_site",
+        lambda site_code: MetadataRow(
+            database_id=1,
+            values={
+                "site_code": "SAN",
+                "name": "Sandhagen",
+                "description": None,
+                "latitude": None,
+                "longitude": None,
+                "parent_id": None,
+            },
+        ),
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_location_type",
+        lambda type_: MetadataRow(
+            database_id=2,
+            values={
+                "type": "well",
+                "description": None,
+            },
+        ),
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_sensor_type",
+        lambda type_: MetadataRow(
+            database_id=3,
+            values={
+                "type": "pressure",
+                "description": None,
+            },
+        ),
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_variable",
+        lambda variable: MetadataRow(
+            database_id=4,
+            values={
+                "variable": "water_level",
+                "derived": False,
+                "description": None,
+            },
+        ),
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_sensor_models",
+        lambda **kwargs: (
+            MetadataRow(
+                database_id=5,
+                values={
+                    "model": "CS451",
+                    "manufacturer": "Campbell Scientific",
+                    "sensor_type_id": 3,
+                },
+            ),
+        ),
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_sensors",
+        lambda **kwargs: (
+            MetadataRow(
+                database_id=6,
+                values={
+                    "sensor_model_id": 5,
+                    "serial_number": "123456",
+                    "description": None,
+                },
+            ),
+        ),
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_locations",
+        lambda **kwargs: (
+            MetadataRow(
+                database_id=7,
+                values={
+                    "site_id": 1,
+                    "location_type_id": 2,
+                    "latitude": None,
+                    "longitude": None,
+                    "height_above_ground": None,
+                    "azimuth": None,
+                    "initial_label": "Well 01",
+                    "initial_label_valid_from": (
+                        config.locations[0].initial_label.valid_from
+                    ),
+                    "initial_label_valid_to": None,
+                },
+            ),
+        ),
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_location_labels",
+        lambda location_id: (
+            MetadataRow(
+                database_id=8,
+                values={
+                    "location_id": 7,
+                    "label": "Well 01",
+                    "valid_from": (
+                        config.locations[0].initial_label.valid_from
+                    ),
+                    "valid_to": None,
+                },
+            ),
+        ),
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_deployments",
+        lambda **kwargs: (
+            MetadataRow(
+                database_id=9,
+                values={
+                    "sensor_id": 6,
+                    "location_id": 7,
+                    "variable_id": 4,
+                    "valid_from": valid_from,
+                    "valid_to": None,
+                },
+            ),
+        ),
+    )
+
+    plan = resolve_metadata_config(config)
+
+    assert plan.errors == ()
+    assert plan.can_apply
+
+    assert {
+        item.plan_id: item.action
+        for item in plan.metadata_items
+    } == {
+        "sites[0]": PlanAction.REUSE,
+        "location_types[0]": PlanAction.REUSE,
+        "sensor_types[0]": PlanAction.REUSE,
+        "variables[0]": PlanAction.REUSE,
+        "sensor_models[0]": PlanAction.REUSE,
+        "sensors[0]": PlanAction.REUSE,
+        "locations[0]": PlanAction.REUSE,
+        "locations[0].initial_label": PlanAction.REUSE,
+        "deployments[0]": PlanAction.REUSE,
     }
 
 
