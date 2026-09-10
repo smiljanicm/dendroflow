@@ -1896,3 +1896,123 @@ def test_deployment_reference_rejects_planned_sensor(
     assert len(errors) == 1
     assert errors[0].code == PlanErrorCode.INVALID_REFERENCE
 
+
+def test_deployment_reference_not_found(monkeypatch):
+    config = ConfigModel(
+        references={
+            "deployments": {
+                "deployment_01": {
+                    "sensor": "sensor_01",
+                }
+            }
+        }
+    )
+
+    registry = build_alias_registry(config)
+
+    existing_bindings = (
+        PlanBinding(
+            resource_type="sensors",
+            alias="sensor_01",
+            resource=ExistingRef(
+                resource_type="sensor",
+                database_id=5,
+            ),
+        ),
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_deployments",
+        lambda **kwargs: (),
+    )
+
+    bindings, errors = resolve_deployment_reference_aliases(
+        registry,
+        existing_bindings,
+    )
+
+    assert bindings == ()
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.NOT_FOUND
+
+
+def test_deployment_reference_missing_location_alias_is_invalid():
+    config = ConfigModel(
+        references={
+            "deployments": {
+                "deployment_01": {
+                    "location": "missing_location",
+                }
+            }
+        }
+    )
+
+    registry = build_alias_registry(config)
+
+    bindings, errors = resolve_deployment_reference_aliases(
+        registry,
+    )
+
+    assert bindings == ()
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.INVALID_REFERENCE
+    assert errors[0].source_path.endswith(".location")
+
+
+def test_deployment_reference_partial_selector_resolves_unique_match(
+    monkeypatch,
+):
+    config = ConfigModel(
+        references={
+            "deployments": {
+                "deployment_01": {
+                    "location": "well_01",
+                }
+            }
+        }
+    )
+
+    registry = build_alias_registry(config)
+
+    existing_bindings = (
+        PlanBinding(
+            resource_type="locations",
+            alias="well_01",
+            resource=ExistingRef(
+                resource_type="location",
+                database_id=3,
+            ),
+        ),
+    )
+
+    def fake_find_deployments(**kwargs):
+        assert kwargs["sensor_id"] is None
+        assert kwargs["location_id"] == 3
+        assert kwargs["variable_id"] is None
+        assert kwargs["valid_from"] is None
+
+        return (
+            MetadataRow(
+                database_id=12,
+                values={},
+            ),
+        )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_deployments",
+        fake_find_deployments,
+    )
+
+    bindings, errors = resolve_deployment_reference_aliases(
+        registry,
+        existing_bindings,
+    )
+
+    assert errors == ()
+    assert bindings[0].resource == ExistingRef(
+        resource_type="deployment",
+        database_id=12,
+    )
+
