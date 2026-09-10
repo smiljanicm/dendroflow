@@ -307,3 +307,44 @@ def find_locations(
     )
 
 
+def find_location_labels(
+    location_id: int,
+) -> tuple[MetadataRow, ...]:
+    """Return the ordered label history for a location."""
+
+    if location_id <= 0:
+        raise ValueError(
+            "location_id must be greater than zero"
+        )
+
+    with connect("dendroflow_metadata") as connection:
+        rows = connection.execute(
+            """
+            SELECT
+                location_label_id,
+                location_id,
+                label,
+                valid_from,
+                valid_to
+            FROM location_labels
+            WHERE location_id = %s
+            ORDER BY
+                valid_from,
+                location_label_id
+            """,
+            (location_id,),
+        ).fetchall()
+
+    return tuple(
+        MetadataRow(
+            database_id=row[0],
+            values={
+                "location_id": row[1],
+                "label": row[2],
+                "valid_from": row[3],
+                "valid_to": row[4],
+            },
+        )
+        for row in rows
+    )
+

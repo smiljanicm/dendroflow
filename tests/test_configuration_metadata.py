@@ -417,3 +417,71 @@ def test_find_locations_requires_selector():
         metadata.find_locations()
 
 
+def test_find_location_labels_returns_ordered_history(
+    monkeypatch,
+):
+    connection = FakeConnection(
+        [
+            (
+                10,
+                3,
+                "Well A",
+                "2025-01-01T00:00:00+00:00",
+                "2026-01-01T00:00:00+00:00",
+            ),
+            (
+                11,
+                3,
+                "Well B",
+                "2026-01-01T00:00:00+00:00",
+                None,
+            ),
+        ]
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "connect",
+        lambda database: connection,
+    )
+
+    result = metadata.find_location_labels(3)
+
+    assert len(result) == 2
+
+    assert result[0].database_id == 10
+    assert result[0].values["location_id"] == 3
+    assert result[0].values["label"] == "Well A"
+
+    assert result[1].database_id == 11
+    assert result[1].values["label"] == "Well B"
+
+    assert connection.parameters == (3,)
+    assert "ORDER BY" in connection.query
+    assert "valid_from" in connection.query
+    assert "location_label_id" in connection.query
+
+
+def test_find_location_labels_returns_empty_history(
+    monkeypatch,
+):
+    connection = FakeConnection([])
+
+    monkeypatch.setattr(
+        metadata,
+        "connect",
+        lambda database: connection,
+    )
+
+    result = metadata.find_location_labels(3)
+
+    assert result == ()
+
+
+def test_find_location_labels_requires_positive_location_id():
+    with pytest.raises(
+        ValueError,
+        match="location_id must be greater than zero",
+    ):
+        metadata.find_location_labels(0)
+
