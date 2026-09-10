@@ -15,6 +15,7 @@ from dendroflow.configuration.resolver import (
     DeclarationAlias,
     ReferenceAlias,
     build_alias_registry,
+    resolve_deployment_declarations,
     resolve_deployment_reference_aliases,
     resolve_location_declarations,
     resolve_location_label_declarations,
@@ -2015,4 +2016,593 @@ def test_deployment_reference_partial_selector_resolves_unique_match(
         resource_type="deployment",
         database_id=12,
     )
+
+
+def test_existing_deployment_becomes_reuse(monkeypatch):
+    valid_from = datetime(
+        2025,
+        4,
+        1,
+        tzinfo=timezone.utc,
+    )
+
+    config = ConfigModel(
+        deployments=[
+            {
+                "ref": "deployment_01",
+                "sensor": "sensor_01",
+                "location": "well_01",
+                "variable": "water_level",
+                "valid_from": valid_from,
+            }
+        ]
+    )
+
+    existing_bindings = (
+        PlanBinding(
+            resource_type="sensors",
+            alias="sensor_01",
+            resource=ExistingRef(
+                resource_type="sensor",
+                database_id=5,
+            ),
+        ),
+        PlanBinding(
+            resource_type="locations",
+            alias="well_01",
+            resource=ExistingRef(
+                resource_type="location",
+                database_id=3,
+            ),
+        ),
+        PlanBinding(
+            resource_type="variables",
+            alias="water_level",
+            resource=ExistingRef(
+                resource_type="variable",
+                database_id=7,
+            ),
+        ),
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_deployments",
+        lambda **kwargs: (
+            MetadataRow(
+                database_id=12,
+                values={
+                    "sensor_id": 5,
+                    "location_id": 3,
+                    "variable_id": 7,
+                    "valid_from": valid_from,
+                    "valid_to": None,
+                },
+            ),
+        ),
+    )
+
+    items, bindings, errors = resolve_deployment_declarations(
+        config,
+        existing_bindings,
+    )
+
+    assert errors == ()
+    assert items[0].action == PlanAction.REUSE
+    assert items[0].database_id == 12
+    assert bindings[0].resource == ExistingRef(
+        resource_type="deployment",
+        database_id=12,
+    )
+
+
+def test_deployment_with_planned_sensor_becomes_create(
+    monkeypatch,
+):
+    config = ConfigModel(
+        deployments=[
+            {
+                "ref": "deployment_01",
+                "sensor": "sensor_01",
+                "location": "well_01",
+                "variable": "water_level",
+                "valid_from": "2025-04-01T00:00:00Z",
+            }
+        ]
+    )
+
+    existing_bindings = (
+        PlanBinding(
+            resource_type="sensors",
+            alias="sensor_01",
+            resource=PlannedRef(
+                resource_type="sensor",
+                plan_id="sensors[0]",
+            ),
+        ),
+        PlanBinding(
+            resource_type="locations",
+            alias="well_01",
+            resource=ExistingRef(
+                resource_type="location",
+                database_id=3,
+            ),
+        ),
+        PlanBinding(
+            resource_type="variables",
+            alias="water_level",
+            resource=ExistingRef(
+                resource_type="variable",
+                database_id=7,
+            ),
+        ),
+    )
+
+    called = False
+
+    def fake_find_deployments(**kwargs):
+        nonlocal called
+        called = True
+        return ()
+
+    monkeypatch.setattr(
+        metadata,
+        "find_deployments",
+        fake_find_deployments,
+    )
+
+    items, bindings, errors = resolve_deployment_declarations(
+        config,
+        existing_bindings,
+    )
+
+    assert errors == ()
+    assert not called
+    assert items[0].action == PlanAction.CREATE
+    assert bindings[0].resource == PlannedRef(
+        resource_type="deployment",
+        plan_id="deployments[0]",
+    )
+
+
+def test_deployment_overlapping_existing_history_conflicts(
+    monkeypatch,
+):
+    config = ConfigModel(
+        deployments=[
+            {
+                "sensor": "sensor_01",
+                "location": "well_02",
+                "variable": "water_level",
+                "valid_from": "2025-06-01T00:00:00Z",
+            }
+        ]
+    )
+
+    existing_bindings = (
+        PlanBinding(
+            resource_type="sensors",
+            alias="sensor_01",
+            resource=ExistingRef(
+                resource_type="sensor",
+                database_id=5,
+            ),
+        ),
+        PlanBinding(
+            resource_type="locations",
+            alias="well_02",
+            resource=ExistingRef(
+                resource_type="location",
+                database_id=4,
+            ),
+        ),
+        PlanBinding(
+            resource_type="variables",
+            alias="water_level",
+            resource=ExistingRef(
+                resource_type="variable",
+                database_id=7,
+            ),
+        ),
+    )
+
+    existing_start = datetime(
+        2025,
+        1,
+        1,
+        tzinfo=timezone.utc,
+    )
+
+    def fake_find_deployments(**kwargs):
+        if "location_id" in kwargs:
+            return ()
+
+        return (
+            MetadataRow(
+                database_id=12,
+                values={
+                    "sensor_id": 5,
+                    "location_id": 3,
+                    "variable_id": 7,
+                    "valid_from": existing_start,
+                    "valid_to": None,
+                },
+            ),
+        )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_deployments",
+        fake_find_deployments,
+    )
+
+    items, bindings, errors = resolve_deployment_declarations(
+        config,
+        existing_bindings,
+    )
+
+    assert items == ()
+    assert bindings == ()
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+
+
+def test_deployment_overlapping_planned_deployment_conflicts(
+    monkeypatch,
+):
+    config = ConfigModel(
+        deployments=[
+            {
+                "sensor": "sensor_01",
+                "location": "well_01",
+                "variable": "water_level",
+                "valid_from": "2025-01-01T00:00:00Z",
+                "valid_to": "2026-01-01T00:00:00Z",
+            },
+            {
+                "sensor": "sensor_01",
+                "location": "well_02",
+                "variable": "water_level",
+                "valid_from": "2025-06-01T00:00:00Z",
+            },
+        ]
+    )
+
+    sensor_ref = PlannedRef(
+        resource_type="sensor",
+        plan_id="sensors[0]",
+    )
+
+    existing_bindings = (
+        PlanBinding(
+            resource_type="sensors",
+            alias="sensor_01",
+            resource=sensor_ref,
+        ),
+        PlanBinding(
+            resource_type="locations",
+            alias="well_01",
+            resource=ExistingRef(
+                resource_type="location",
+                database_id=3,
+            ),
+        ),
+        PlanBinding(
+            resource_type="locations",
+            alias="well_02",
+            resource=ExistingRef(
+                resource_type="location",
+                database_id=4,
+            ),
+        ),
+        PlanBinding(
+            resource_type="variables",
+            alias="water_level",
+            resource=ExistingRef(
+                resource_type="variable",
+                database_id=7,
+            ),
+        ),
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_deployments",
+        lambda **kwargs: (),
+    )
+
+    items, _, errors = resolve_deployment_declarations(
+        config,
+        existing_bindings,
+    )
+
+    assert len(items) == 1
+    assert items[0].action == PlanAction.CREATE
+
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+    assert errors[0].source_path == "deployments[1]"
+
+
+def test_new_deployment_with_existing_dependencies_becomes_create(
+    monkeypatch,
+):
+    config = ConfigModel(
+        deployments=[
+            {
+                "ref": "deployment_01",
+                "sensor": "sensor_01",
+                "location": "well_01",
+                "variable": "water_level",
+                "valid_from": "2025-04-01T00:00:00Z",
+            }
+        ]
+    )
+
+    existing_bindings = (
+        PlanBinding(
+            resource_type="sensors",
+            alias="sensor_01",
+            resource=ExistingRef(
+                resource_type="sensor",
+                database_id=5,
+            ),
+        ),
+        PlanBinding(
+            resource_type="locations",
+            alias="well_01",
+            resource=ExistingRef(
+                resource_type="location",
+                database_id=3,
+            ),
+        ),
+        PlanBinding(
+            resource_type="variables",
+            alias="water_level",
+            resource=ExistingRef(
+                resource_type="variable",
+                database_id=7,
+            ),
+        ),
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_deployments",
+        lambda **kwargs: (),
+    )
+
+    items, bindings, errors = resolve_deployment_declarations(
+        config,
+        existing_bindings,
+    )
+
+    assert errors == ()
+    assert len(items) == 1
+    assert items[0].action == PlanAction.CREATE
+    assert bindings[0].resource == PlannedRef(
+        resource_type="deployment",
+        plan_id="deployments[0]",
+    )
+
+
+def test_existing_deployment_explicit_valid_to_difference_conflicts(
+    monkeypatch,
+):
+    valid_from = datetime(
+        2025,
+        4,
+        1,
+        tzinfo=timezone.utc,
+    )
+
+    config = ConfigModel(
+        deployments=[
+            {
+                "sensor": "sensor_01",
+                "location": "well_01",
+                "variable": "water_level",
+                "valid_from": valid_from,
+                "valid_to": None,
+            }
+        ]
+    )
+
+    existing_bindings = (
+        PlanBinding(
+            resource_type="sensors",
+            alias="sensor_01",
+            resource=ExistingRef(
+                resource_type="sensor",
+                database_id=5,
+            ),
+        ),
+        PlanBinding(
+            resource_type="locations",
+            alias="well_01",
+            resource=ExistingRef(
+                resource_type="location",
+                database_id=3,
+            ),
+        ),
+        PlanBinding(
+            resource_type="variables",
+            alias="water_level",
+            resource=ExistingRef(
+                resource_type="variable",
+                database_id=7,
+            ),
+        ),
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_deployments",
+        lambda **kwargs: (
+            MetadataRow(
+                database_id=12,
+                values={
+                    "sensor_id": 5,
+                    "location_id": 3,
+                    "variable_id": 7,
+                    "valid_from": valid_from,
+                    "valid_to": datetime(
+                        2026,
+                        1,
+                        1,
+                        tzinfo=timezone.utc,
+                    ),
+                },
+            ),
+        ),
+    )
+
+    items, _, errors = resolve_deployment_declarations(
+        config,
+        existing_bindings,
+    )
+
+    assert len(items) == 1
+    assert items[0].action == PlanAction.REUSE
+
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+
+
+def test_deployment_adjacent_to_existing_history_becomes_create(
+    monkeypatch,
+):
+    new_start = datetime(
+        2026,
+        1,
+        1,
+        tzinfo=timezone.utc,
+    )
+
+    config = ConfigModel(
+        deployments=[
+            {
+                "sensor": "sensor_01",
+                "location": "well_02",
+                "variable": "water_level",
+                "valid_from": new_start,
+            }
+        ]
+    )
+
+    existing_bindings = (
+        PlanBinding(
+            resource_type="sensors",
+            alias="sensor_01",
+            resource=ExistingRef(
+                resource_type="sensor",
+                database_id=5,
+            ),
+        ),
+        PlanBinding(
+            resource_type="locations",
+            alias="well_02",
+            resource=ExistingRef(
+                resource_type="location",
+                database_id=4,
+            ),
+        ),
+        PlanBinding(
+            resource_type="variables",
+            alias="water_level",
+            resource=ExistingRef(
+                resource_type="variable",
+                database_id=7,
+            ),
+        ),
+    )
+
+    def fake_find_deployments(**kwargs):
+        if kwargs.get("location_id") is not None:
+            return ()
+
+        return (
+            MetadataRow(
+                database_id=12,
+                values={
+                    "sensor_id": 5,
+                    "location_id": 3,
+                    "variable_id": 7,
+                    "valid_from": datetime(
+                        2025,
+                        1,
+                        1,
+                        tzinfo=timezone.utc,
+                    ),
+                    "valid_to": new_start,
+                },
+            ),
+        )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_deployments",
+        fake_find_deployments,
+    )
+
+    items, _, errors = resolve_deployment_declarations(
+        config,
+        existing_bindings,
+    )
+
+    assert errors == ()
+    assert len(items) == 1
+    assert items[0].action == PlanAction.CREATE
+
+
+def test_deployment_missing_relationship_bindings_reports_all_errors(
+    monkeypatch,
+):
+    config = ConfigModel(
+        deployments=[
+            {
+                "sensor": "missing_sensor",
+                "location": "missing_location",
+                "variable": "missing_variable",
+                "valid_from": "2025-04-01T00:00:00Z",
+            }
+        ]
+    )
+
+    called = False
+
+    def fake_find_deployments(**kwargs):
+        nonlocal called
+        called = True
+        return ()
+
+    monkeypatch.setattr(
+        metadata,
+        "find_deployments",
+        fake_find_deployments,
+    )
+
+    items, bindings, errors = resolve_deployment_declarations(
+        config,
+    )
+
+    assert items == ()
+    assert bindings == ()
+    assert not called
+
+    assert len(errors) == 3
+    assert all(
+        error.code == PlanErrorCode.INVALID_REFERENCE
+        for error in errors
+    )
+
+    assert {
+        error.source_path
+        for error in errors
+    } == {
+        "deployments[0].sensor",
+        "deployments[0].location",
+        "deployments[0].variable",
+    }
+
 

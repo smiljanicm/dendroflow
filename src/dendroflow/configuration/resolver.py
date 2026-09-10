@@ -11,6 +11,7 @@ from .plan import (
     PlanError,
     PlanErrorCode,
     PlannedRef,
+    ResolvedDeploymentValues,
     ResolvedLocationLabelValues,
     ResolvedLocationTypeValues,
     ResolvedLocationValues,
@@ -1678,6 +1679,7 @@ def resolve_location_label_declarations(
 
     return tuple(items), tuple(errors)
 
+
 def _intervals_overlap(
     first_start: datetime,
     first_end: datetime | None,
@@ -1691,6 +1693,9 @@ def _intervals_overlap(
     ) and (
         second_end is None or first_start < second_end
     )
+
+
+# Metadata resolutions for deployments
 
 
 def resolve_deployment_reference_aliases(
@@ -1909,4 +1914,291 @@ def resolve_deployment_reference_aliases(
         )
 
     return tuple(bindings), tuple(errors)
+
+
+def resolve_deployment_declarations(
+    config: ConfigModel,
+    existing_bindings: tuple[PlanBinding, ...] = (),
+) -> tuple[
+    tuple[ResolvedPlanItem, ...],
+    tuple[PlanBinding, ...],
+    tuple[PlanError, ...],
+]:
+    """Resolve deployment declarations against PostgreSQL."""
+
+    items: list[ResolvedPlanItem] = []
+    bindings: list[PlanBinding] = []
+    errors: list[PlanError] = []
+
+    for index, declaration in enumerate(config.deployments):
+        plan_id = f"deployments[{index}]"
+
+        sensor_binding = _find_binding(
+            existing_bindings,
+            "sensors",
+            declaration.sensor,
+        )
+        location_binding = _find_binding(
+            existing_bindings,
+            "locations",
+            declaration.location,
+        )
+        variable_binding = _find_binding(
+            existing_bindings,
+            "variables",
+            declaration.variable,
+        )
+
+        if sensor_binding is None:
+            errors.append(
+                PlanError(
+                    code=PlanErrorCode.INVALID_REFERENCE,
+                    resource_type="deployment",
+                    source_path=f"{plan_id}.sensor",
+                    message=(
+                        "unable to resolve sensor "
+                        f"{declaration.sensor!r}"
+                    ),
+                )
+            )
+
+        if location_binding is None:
+            errors.append(
+                PlanError(
+                    code=PlanErrorCode.INVALID_REFERENCE,
+                    resource_type="deployment",
+                    source_path=f"{plan_id}.location",
+                    message=(
+                        "unable to resolve location "
+                        f"{declaration.location!r}"
+                    ),
+                )
+            )
+
+        if variable_binding is None:
+            errors.append(
+                PlanError(
+                    code=PlanErrorCode.INVALID_REFERENCE,
+                    resource_type="deployment",
+                    source_path=f"{plan_id}.variable",
+                    message=(
+                        "unable to resolve variable "
+                        f"{declaration.variable!r}"
+                    ),
+                )
+            )
+
+        if (
+            sensor_binding is None
+            or location_binding is None
+            or variable_binding is None
+        ):
+            continue
+
+        requested_sensor = sensor_binding.resource
+        requested_location = location_binding.resource
+        requested_variable = variable_binding.resource
+
+        # Exact natural-identity lookup is possible only when
+        # all referenced resources already exist.
+        if (
+            isinstance(requested_sensor, ExistingRef)
+            and isinstance(requested_location, ExistingRef)
+            and isinstance(requested_variable, ExistingRef)
+        ):
+            exact_rows = metadata.find_deployments(
+                sensor_id=requested_sensor.database_id,
+                location_id=requested_location.database_id,
+                variable_id=requested_variable.database_id,
+                valid_from=declaration.valid_from,
+            )
+        else:
+            exact_rows = ()
+
+        if len(exact_rows) > 1:
+            errors.append(
+                PlanError(
+                    code=PlanErrorCode.AMBIGUOUS,
+                    resource_type="deployment",
+                    source_path=plan_id,
+                    message=(
+                        "deployment natural identity matched "
+                        "multiple resources"
+                    ),
+                    candidate_ids=tuple(
+                        row.database_id for row in exact_rows
+                    ),
+                )
+            )
+            continue
+
+        if exact_rows:
+            row = exact_rows[0]
+
+            errors.extend(
+                _compare_explicit_fields(
+                    declaration,
+                    row,
+                    ("valid_to",),
+                    plan_id,
+                    "deployment",
+                )
+            )
+
+            values = ResolvedDeploymentValues(
+                sensor=ExistingRef(
+                    resource_type="sensor",
+                    database_id=row.values["sensor_id"],
+                ),
+                location=ExistingRef(
+                    resource_type="location",
+                    database_id=row.values["location_id"],
+                ),
+                variable=ExistingRef(
+                    resource_type="variable",
+                    database_id=row.values["variable_id"],
+                ),
+                valid_from=row.values["valid_from"],
+                valid_to=row.values["valid_to"],
+            )
+
+            item = ResolvedPlanItem(
+                plan_id=plan_id,
+                resource_type="deployment",
+                action=PlanAction.REUSE,
+                database_id=row.database_id,
+                values=values,
+                source_path=plan_id,
+            )
+
+            resource: ResourceRef = ExistingRef(
+                resource_type="deployment",
+                database_id=row.database_id,
+            )
+
+            items.append(item)
+
+            if declaration.ref is not None:
+                bindings.append(
+                    PlanBinding(
+                        resource_type="deployments",
+                        alias=declaration.ref,
+                        resource=resource,
+                    )
+                )
+
+            continue
+
+        # Detect overlap with deployments already planned by this config.
+        planned_overlap = next(
+            (
+                item
+                for item in items
+                if (
+                    item.resource_type == "deployment"
+                    and item.action == PlanAction.CREATE
+                    and isinstance(
+                        item.values,
+                        ResolvedDeploymentValues,
+                    )
+                    and item.values.sensor == requested_sensor
+                    and item.values.variable == requested_variable
+                    and _intervals_overlap(
+                        declaration.valid_from,
+                        declaration.valid_to,
+                        item.values.valid_from,
+                        item.values.valid_to,
+                    )
+                )
+            ),
+            None,
+        )
+
+        if planned_overlap is not None:
+            errors.append(
+                PlanError(
+                    code=PlanErrorCode.CONFLICT,
+                    resource_type="deployment",
+                    source_path=plan_id,
+                    message=(
+                        "deployment validity overlaps planned "
+                        f"deployment {planned_overlap.source_path}"
+                    ),
+                )
+            )
+            continue
+
+        # Existing DB history can only exist if sensor and variable
+        # themselves already exist.
+        if (
+            isinstance(requested_sensor, ExistingRef)
+            and isinstance(requested_variable, ExistingRef)
+        ):
+            history = metadata.find_deployments(
+                sensor_id=requested_sensor.database_id,
+                variable_id=requested_variable.database_id,
+            )
+
+            overlapping_row = next(
+                (
+                    row
+                    for row in history
+                    if _intervals_overlap(
+                        declaration.valid_from,
+                        declaration.valid_to,
+                        row.values["valid_from"],
+                        row.values["valid_to"],
+                    )
+                ),
+                None,
+            )
+
+            if overlapping_row is not None:
+                errors.append(
+                    PlanError(
+                        code=PlanErrorCode.CONFLICT,
+                        resource_type="deployment",
+                        source_path=plan_id,
+                        message=(
+                            "deployment validity overlaps existing "
+                            f"deployment {overlapping_row.database_id}"
+                        ),
+                    )
+                )
+                continue
+
+        values = ResolvedDeploymentValues(
+            sensor=requested_sensor,
+            location=requested_location,
+            variable=requested_variable,
+            valid_from=declaration.valid_from,
+            valid_to=declaration.valid_to,
+        )
+
+        item = ResolvedPlanItem(
+            plan_id=plan_id,
+            resource_type="deployment",
+            action=PlanAction.CREATE,
+            values=values,
+            source_path=plan_id,
+        )
+
+        resource = PlannedRef(
+            resource_type="deployment",
+            plan_id=plan_id,
+        )
+
+        items.append(item)
+
+        if declaration.ref is not None:
+            bindings.append(
+                PlanBinding(
+                    resource_type="deployments",
+                    alias=declaration.ref,
+                    resource=resource,
+                )
+            )
+
+    return tuple(items), tuple(bindings), tuple(errors)
+
 
