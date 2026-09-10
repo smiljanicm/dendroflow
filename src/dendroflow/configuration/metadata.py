@@ -228,3 +228,82 @@ def find_sensors(
         for row in rows
     )
 
+
+def find_locations(
+    *,
+    site_id: int | None = None,
+    initial_label: str | None = None,
+) -> tuple[MetadataRow, ...]:
+    """Find locations using site and/or their earliest label."""
+
+    conditions: list[str] = []
+    parameters: list[object] = []
+
+    if site_id is not None:
+        conditions.append("locations.site_id = %s")
+        parameters.append(site_id)
+
+    if initial_label is not None:
+        conditions.append("initial_label.label = %s")
+        parameters.append(initial_label)
+
+    if not conditions:
+        raise ValueError(
+            "location lookup requires site_id or initial_label"
+        )
+
+    where_clause = " AND ".join(conditions)
+
+    with connect("dendroflow_metadata") as connection:
+        rows = connection.execute(
+            f"""
+            SELECT
+                locations.location_id,
+                locations.site_id,
+                locations.location_type_id,
+                locations.latitude,
+                locations.longitude,
+                locations.height_above_ground,
+                locations.azimuth,
+                initial_label.label,
+                initial_label.valid_from,
+                initial_label.valid_to
+            FROM locations
+            JOIN LATERAL (
+                SELECT
+                    location_labels.label,
+                    location_labels.valid_from,
+                    location_labels.valid_to
+                FROM location_labels
+                WHERE
+                    location_labels.location_id = locations.location_id
+                ORDER BY
+                    location_labels.valid_from,
+                    location_labels.location_label_id
+                LIMIT 1
+            ) AS initial_label ON TRUE
+            WHERE {where_clause}
+            ORDER BY locations.location_id
+            """,
+            tuple(parameters),
+        ).fetchall()
+
+    return tuple(
+        MetadataRow(
+            database_id=row[0],
+            values={
+                "site_id": row[1],
+                "location_type_id": row[2],
+                "latitude": row[3],
+                "longitude": row[4],
+                "height_above_ground": row[5],
+                "azimuth": row[6],
+                "initial_label": row[7],
+                "initial_label_valid_from": row[8],
+                "initial_label_valid_to": row[9],
+            },
+        )
+        for row in rows
+    )
+
+

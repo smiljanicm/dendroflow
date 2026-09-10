@@ -311,3 +311,109 @@ def test_find_sensors_requires_selector():
     ):
         metadata.find_sensors()
 
+
+def test_find_locations_by_site_and_initial_label(monkeypatch):
+    connection = FakeConnection(
+        [
+            (
+                3,
+                1,
+                2,
+                54.0,
+                13.0,
+                0.0,
+                None,
+                "Rewetted well",
+                "2025-04-01T00:00:00+00:00",
+                None,
+            )
+        ]
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "connect",
+        lambda database: connection,
+    )
+
+    result = metadata.find_locations(
+        site_id=1,
+        initial_label="Rewetted well",
+    )
+
+    assert len(result) == 1
+    assert result[0].database_id == 3
+    assert result[0].values["site_id"] == 1
+    assert result[0].values["initial_label"] == "Rewetted well"
+    assert connection.parameters == (
+        1,
+        "Rewetted well",
+    )
+    assert "ORDER BY" in connection.query
+    assert "location_labels.valid_from" in connection.query
+
+
+def test_find_locations_by_site_can_return_multiple(monkeypatch):
+    connection = FakeConnection(
+        [
+            (
+                3, 1, 2, None, None, None, None,
+                "Well A", "2025-01-01T00:00:00+00:00", None,
+            ),
+            (
+                4, 1, 2, None, None, None, None,
+                "Well B", "2025-01-01T00:00:00+00:00", None,
+            ),
+        ]
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "connect",
+        lambda database: connection,
+    )
+
+    result = metadata.find_locations(site_id=1)
+
+    assert len(result) == 2
+    assert connection.parameters == (1,)
+
+
+def test_find_locations_by_initial_label_can_return_multiple(
+    monkeypatch,
+):
+    connection = FakeConnection(
+        [
+            (
+                3, 1, 2, None, None, None, None,
+                "Well 01", "2025-01-01T00:00:00+00:00", None,
+            ),
+            (
+                9, 4, 2, None, None, None, None,
+                "Well 01", "2025-01-01T00:00:00+00:00", None,
+            ),
+        ]
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "connect",
+        lambda database: connection,
+    )
+
+    result = metadata.find_locations(
+        initial_label="Well 01"
+    )
+
+    assert len(result) == 2
+    assert connection.parameters == ("Well 01",)
+
+
+def test_find_locations_requires_selector():
+    with pytest.raises(
+        ValueError,
+        match="requires site_id or initial_label",
+    ):
+        metadata.find_locations()
+
+
