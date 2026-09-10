@@ -19,10 +19,18 @@ from .models import (
     VariableConfig,
 )
 from .parser import ConfigParseError, load_config
+from .validation import (
+    ConfigValidationError,
+    ConfigValidationIssue,
+    collect_config_issues,
+    validate_config,
+)
 
 __all__ = [
     "ConfigModel",
     "ConfigParseError",
+    "ConfigValidationError",
+    "ConfigValidationIssue",
     "DeploymentConfig",
     "DeploymentLookupConfig",
     "DeploymentUpdateConfig",
@@ -40,5 +48,7 @@ __all__ = [
     "SiteConfig",
     "TimestampConfig",
     "VariableConfig",
+    "collect_config_issues",
     "load_config",
+    "validate_config",     
 ]
