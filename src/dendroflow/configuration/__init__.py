@@ -18,9 +18,11 @@ from .models import (
     TimestampConfig,
     VariableConfig,
 )
+from .parser import ConfigParseError, load_config
 
 __all__ = [
     "ConfigModel",
+    "ConfigParseError",
     "DeploymentConfig",
     "DeploymentLookupConfig",
     "DeploymentUpdateConfig",
@@ -38,4 +40,5 @@ __all__ = [
     "SiteConfig",
     "TimestampConfig",
     "VariableConfig",
+    "load_config",
 ]

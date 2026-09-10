@@ -13,8 +13,9 @@ authors = [
     { name = "SmiljanicM" }
 ]
 dependencies = [
-    "pydantic>=2.13.5,<3",
     "pandas>=2.0",
+    "PyYAML>=6,<7",
+    "pydantic>=2.13.5,<3",
     "psycopg[binary]>=3.2"
 ]
 
