@@ -1,0 +1,1 @@
+"""Internal CONFIG resolution implementation."""
