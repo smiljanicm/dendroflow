@@ -12,6 +12,7 @@ from dendroflow.configuration.resolver import (
     ReferenceAlias,
     build_alias_registry,
     resolve_location_declarations,
+    resolve_location_reference_aliases,
     resolve_sensor_declarations,
     resolve_sensor_model_declarations,
     resolve_sensor_model_reference_aliases,
@@ -1076,5 +1077,107 @@ def test_new_location_with_planned_site_does_not_query_database(
         resource_type="location",
         plan_id="locations[0]",
     )
+
+
+def test_existing_location_becomes_reuse(monkeypatch):
+    config = ConfigModel(
+        locations=[
+            {
+                "ref": "well_01",
+                "site": "sandhagen",
+                "location_type": "well",
+                "initial_label": {
+                    "label": "Well 01",
+                    "valid_from": "2025-01-01T00:00:00Z",
+                },
+            }
+        ]
+    )
+
+    existing_bindings = (
+        PlanBinding(
+            resource_type="sites",
+            alias="sandhagen",
+            resource=ExistingRef(
+                resource_type="site",
+                database_id=1,
+            ),
+        ),
+        PlanBinding(
+            resource_type="location_types",
+            alias="well",
+            resource=ExistingRef(
+                resource_type="location_type",
+                database_id=2,
+            ),
+        ),
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_locations",
+        lambda **kwargs: (
+            MetadataRow(
+                database_id=3,
+                values={
+                    "site_id": 1,
+                    "location_type_id": 2,
+                    "latitude": None,
+                    "longitude": None,
+                    "height_above_ground": None,
+                    "azimuth": None,
+                    "initial_label": "Well 01",
+                    "initial_label_valid_from": (
+                        "2025-01-01T00:00:00+00:00"
+                    ),
+                    "initial_label_valid_to": None,
+                },
+            ),
+        ),
+    )
+
+    items, bindings, errors = resolve_location_declarations(
+        config,
+        existing_bindings=existing_bindings,
+    )
+
+    assert errors == ()
+    assert items[0].action == PlanAction.REUSE
+    assert items[0].database_id == 3
+    assert bindings[0].resource == ExistingRef(
+        resource_type="location",
+        database_id=3,
+    )
+
+
+def test_location_reference_reports_ambiguity(monkeypatch):
+    config = ConfigModel(
+        references={
+            "locations": {
+                "well_01": {
+                    "initial_label": "Well 01",
+                }
+            }
+        }
+    )
+
+    registry = build_alias_registry(config)
+
+    monkeypatch.setattr(
+        metadata,
+        "find_locations",
+        lambda **kwargs: (
+            MetadataRow(3, {}),
+            MetadataRow(7, {}),
+        ),
+    )
+
+    bindings, errors = resolve_location_reference_aliases(
+        registry
+    )
+
+    assert bindings == ()
+    assert errors[0].code == PlanErrorCode.AMBIGUOUS
+    assert errors[0].candidate_ids == (3, 7)
 
 
