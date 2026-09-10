@@ -43,6 +43,7 @@ def collect_config_issues(
     _validate_refs(config, issues)
     _validate_natural_identities(config, issues)
     _validate_relationships(config, issues)
+    _validate_semantics(config, issues)
 
     return tuple(issues)
 
@@ -278,6 +279,169 @@ def _validate_relationships(
                 aliases,
                 issues,
             )
+
+
+def _validate_semantics(
+    config: ConfigModel,
+    issues: list[ConfigValidationIssue],
+) -> None:
+    _validate_location_labels(config, issues)
+    _validate_interfaces(config, issues)
+    _validate_updates(config, issues)
+
+
+def _validate_location_labels(
+    config: ConfigModel,
+    issues: list[ConfigValidationIssue],
+) -> None:
+    seen: dict[tuple[str, object], str] = {}
+
+    for index, location in enumerate(config.locations):
+        if location.ref is None:
+            continue
+
+        key = (
+            location.ref,
+            location.initial_label.valid_from,
+        )
+        seen[key] = f"locations[{index}].initial_label"
+
+    for index, label in enumerate(config.location_labels):
+        key = (
+            label.location,
+            label.valid_from,
+        )
+
+        if key in seen:
+            issues.append(
+                ConfigValidationIssue(
+                    path=f"location_labels[{index}]",
+                    message=(
+                        "another label for this location starts "
+                        f"at the same time; first declared at {seen[key]}"
+                    ),
+                )
+            )
+        else:
+            seen[key] = f"location_labels[{index}]"
+
+
+def _validate_interfaces(
+    config: ConfigModel,
+    issues: list[ConfigValidationIssue],
+) -> None:
+    for file_index, file in enumerate(config.files):
+        seen: dict[tuple[str, str, str], int] = {}
+
+        for interface_index, interface in enumerate(file.interfaces):
+            key = (
+                interface.deployment,
+                interface.timestamp_column,
+                interface.values_column,
+            )
+
+            if key in seen:
+                first_index = seen[key]
+                issues.append(
+                    ConfigValidationIssue(
+                        path=(
+                            f"files[{file_index}].interfaces"
+                            f"[{interface_index}]"
+                        ),
+                        message=(
+                            "duplicate interface mapping; first declared at "
+                            f"files[{file_index}].interfaces[{first_index}]"
+                        ),
+                    )
+                )
+            else:
+                seen[key] = interface_index
+
+
+def _validate_updates(
+    config: ConfigModel,
+    issues: list[ConfigValidationIssue],
+) -> None:
+    _validate_duplicate_update_selectors(
+        config.updates.sensors,
+        "sensors",
+        issues,
+    )
+    _validate_duplicate_update_selectors(
+        config.updates.deployments,
+        "deployments",
+        issues,
+    )
+
+    aliases = {
+        resource_type: _get_local_aliases(config, resource_type)
+        for resource_type in (
+            "sensors",
+            "locations",
+            "variables",
+        )
+    }
+
+    for index, update in enumerate(config.updates.deployments):
+        fields_set = update.set.model_fields_set
+
+        if "sensor" in fields_set and update.set.sensor is not None:
+            _require_local_alias(
+                update.set.sensor,
+                "sensors",
+                f"updates.deployments[{index}].set.sensor",
+                aliases,
+                issues,
+            )
+
+        if "location" in fields_set and update.set.location is not None:
+            _require_local_alias(
+                update.set.location,
+                "locations",
+                f"updates.deployments[{index}].set.location",
+                aliases,
+                issues,
+            )
+
+        if "variable" in fields_set and update.set.variable is not None:
+            _require_local_alias(
+                update.set.variable,
+                "variables",
+                f"updates.deployments[{index}].set.variable",
+                aliases,
+                issues,
+            )
+
+
+def _validate_duplicate_update_selectors(
+    updates: list[object],
+    resource_type: str,
+    issues: list[ConfigValidationIssue],
+) -> None:
+    seen: dict[tuple[tuple[str, object], ...], int] = {}
+
+    for index, update in enumerate(updates):
+        selector = tuple(
+            sorted(
+                update.update.model_dump(
+                    exclude_none=True
+                ).items()
+            )
+        )
+
+        if selector in seen:
+            first_index = seen[selector]
+            issues.append(
+                ConfigValidationIssue(
+                    path=f"updates.{resource_type}[{index}].update",
+                    message=(
+                        "duplicate update selector; first declared at "
+                        f"updates.{resource_type}[{first_index}].update"
+                    ),
+                )
+            )
+        else:
+            seen[selector] = index
 
 
 def _find_duplicate_identities(
