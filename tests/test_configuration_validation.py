@@ -404,4 +404,3 @@ def test_validation_accepts_deployment_update_relationship_alias():
 
     validate_config(config)
 
-

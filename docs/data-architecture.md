@@ -184,7 +184,7 @@ Defines the controlled vocabulary for location types.
 location_types
 --------------
 location_type_id
-name
+type
 description
 ```
 

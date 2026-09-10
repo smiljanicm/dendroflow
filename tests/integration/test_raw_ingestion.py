@@ -73,7 +73,7 @@ def raw_ingestion_fixture(tmp_path):
             metadata_ids["location_type_id"] = connection.execute(
                 """
                 INSERT INTO location_types (
-                    name,
+                    type,
                     description
                 )
                 VALUES (%s, %s)
