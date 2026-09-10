@@ -14,6 +14,7 @@ from .plan import (
     ResolvedPlanItem,
     ResolvedSensorModelValues,
     ResolvedSensorTypeValues,
+    ResolvedSensorValues,
     ResolvedSiteValues,
     ResolvedVariableValues,
     ResourceRef,
@@ -844,4 +845,244 @@ def resolve_sensor_model_declarations(
 
     return tuple(items), tuple(bindings), tuple(errors)
 
+
+def resolve_sensor_reference_aliases(
+    registry: AliasRegistry,
+    existing_bindings: tuple[PlanBinding, ...] = (),
+) -> tuple[tuple[PlanBinding, ...], tuple[PlanError, ...]]:
+    """Resolve sensor reference aliases against PostgreSQL."""
+
+    bindings: list[PlanBinding] = []
+    errors: list[PlanError] = []
+
+    for entry in registry.entries:
+        if not isinstance(entry, ReferenceAlias):
+            continue
+
+        if entry.resource_type != "sensors":
+            continue
+
+        sensor_model_id: int | None = None
+
+        if entry.selector.sensor_model is not None:
+            model_binding = _find_binding(
+                existing_bindings,
+                "sensor_models",
+                entry.selector.sensor_model,
+            )
+
+            if model_binding is None:
+                errors.append(
+                    PlanError(
+                        code=PlanErrorCode.INVALID_REFERENCE,
+                        resource_type="sensors",
+                        source_path=(
+                            f"{entry.source_path}.sensor_model"
+                        ),
+                        message=(
+                            "unable to resolve sensor model "
+                            f"{entry.selector.sensor_model!r}"
+                        ),
+                    )
+                )
+                continue
+
+            if isinstance(model_binding.resource, PlannedRef):
+                errors.append(
+                    PlanError(
+                        code=PlanErrorCode.INVALID_REFERENCE,
+                        resource_type="sensors",
+                        source_path=(
+                            f"{entry.source_path}.sensor_model"
+                        ),
+                        message=(
+                            "existing sensor reference cannot use "
+                            "a sensor model that is planned for creation"
+                        ),
+                    )
+                )
+                continue
+
+            sensor_model_id = model_binding.resource.database_id
+
+        rows = metadata.find_sensors(
+            serial_number=entry.selector.serial_number,
+            sensor_model_id=sensor_model_id,
+        )
+
+        if not rows:
+            errors.append(
+                PlanError(
+                    code=PlanErrorCode.NOT_FOUND,
+                    resource_type="sensors",
+                    source_path=entry.source_path,
+                    message="sensor resource not found",
+                )
+            )
+            continue
+
+        if len(rows) > 1:
+            errors.append(
+                PlanError(
+                    code=PlanErrorCode.AMBIGUOUS,
+                    resource_type="sensors",
+                    source_path=entry.source_path,
+                    message=(
+                        "sensor reference matched multiple resources"
+                    ),
+                    candidate_ids=tuple(
+                        row.database_id for row in rows
+                    ),
+                )
+            )
+            continue
+
+        bindings.append(
+            PlanBinding(
+                resource_type="sensors",
+                alias=entry.alias,
+                resource=ExistingRef(
+                    resource_type="sensor",
+                    database_id=rows[0].database_id,
+                ),
+            )
+        )
+
+    return tuple(bindings), tuple(errors)
+
+
+def resolve_sensor_declarations(
+    config: ConfigModel,
+    existing_bindings: tuple[PlanBinding, ...] = (),
+) -> tuple[
+    tuple[ResolvedPlanItem, ...],
+    tuple[PlanBinding, ...],
+    tuple[PlanError, ...],
+]:
+    """Resolve sensor declarations against PostgreSQL."""
+
+    items: list[ResolvedPlanItem] = []
+    bindings: list[PlanBinding] = []
+    errors: list[PlanError] = []
+
+    for index, declaration in enumerate(config.sensors):
+        plan_id = f"sensors[{index}]"
+
+        model_binding = _find_binding(
+            existing_bindings,
+            "sensor_models",
+            declaration.sensor_model,
+        )
+
+        if model_binding is None:
+            errors.append(
+                PlanError(
+                    code=PlanErrorCode.INVALID_REFERENCE,
+                    resource_type="sensor",
+                    source_path=f"{plan_id}.sensor_model",
+                    message=(
+                        "unable to resolve sensor model "
+                        f"{declaration.sensor_model!r}"
+                    ),
+                )
+            )
+            continue
+
+        requested_model = model_binding.resource
+
+        if isinstance(requested_model, PlannedRef):
+            row = None
+        else:
+            rows = metadata.find_sensors(
+                serial_number=declaration.serial_number,
+                sensor_model_id=requested_model.database_id,
+            )
+
+            if len(rows) > 1:
+                errors.append(
+                    PlanError(
+                        code=PlanErrorCode.AMBIGUOUS,
+                        resource_type="sensor",
+                        source_path=plan_id,
+                        message=(
+                            "sensor natural identity matched "
+                            "multiple resources"
+                        ),
+                        candidate_ids=tuple(
+                            row.database_id for row in rows
+                        ),
+                    )
+                )
+                continue
+
+            row = rows[0] if rows else None
+
+        if row is None:
+            values = ResolvedSensorValues(
+                serial_number=declaration.serial_number,
+                sensor_model=requested_model,
+                description=declaration.description,
+            )
+
+            item = ResolvedPlanItem(
+                plan_id=plan_id,
+                resource_type="sensor",
+                action=PlanAction.CREATE,
+                values=values,
+                source_path=plan_id,
+            )
+
+            resource: ResourceRef = PlannedRef(
+                resource_type="sensor",
+                plan_id=plan_id,
+            )
+
+        else:
+            errors.extend(
+                _compare_explicit_fields(
+                    declaration,
+                    row,
+                    ("description",),
+                    plan_id,
+                    "sensor",
+                )
+            )
+
+            existing_model = ExistingRef(
+                resource_type="sensor_model",
+                database_id=row.values["sensor_model_id"],
+            )
+
+            values = ResolvedSensorValues(
+                serial_number=row.values["serial_number"],
+                sensor_model=existing_model,
+                description=row.values["description"],
+            )
+
+            item = ResolvedPlanItem(
+                plan_id=plan_id,
+                resource_type="sensor",
+                action=PlanAction.REUSE,
+                database_id=row.database_id,
+                values=values,
+                source_path=plan_id,
+            )
+
+            resource = ExistingRef(
+                resource_type="sensor",
+                database_id=row.database_id,
+            )
+
+        items.append(item)
+
+        if declaration.ref is not None:
+            bindings.append(
+                PlanBinding(
+                    resource_type="sensors",
+                    alias=declaration.ref,
+                    resource=resource,
+                )
+            )
+
+    return tuple(items), tuple(bindings), tuple(errors)
 

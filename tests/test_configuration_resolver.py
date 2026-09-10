@@ -11,8 +11,10 @@ from dendroflow.configuration.resolver import (
     PlanBinding,
     ReferenceAlias,
     build_alias_registry,
+    resolve_sensor_declarations,
     resolve_sensor_model_declarations,
     resolve_sensor_model_reference_aliases,
+    resolve_sensor_reference_aliases,
     resolve_simple_declarations,
     resolve_simple_reference_aliases,
 )
@@ -872,4 +874,142 @@ def test_existing_sensor_model_reports_sensor_type_conflict(
     assert items[0].action == PlanAction.REUSE
     assert len(errors) == 1
     assert errors[0].code == PlanErrorCode.CONFLICT
+
+
+def test_new_sensor_with_planned_model_does_not_query_database(
+    monkeypatch,
+):
+    config = ConfigModel(
+        sensors=[
+            {
+                "ref": "sensor_01",
+                "serial_number": "123456",
+                "sensor_model": "new_model",
+            }
+        ]
+    )
+
+    model_bindings = (
+        PlanBinding(
+            resource_type="sensor_models",
+            alias="new_model",
+            resource=PlannedRef(
+                resource_type="sensor_model",
+                plan_id="sensor_models[0]",
+            ),
+        ),
+    )
+
+    called = False
+
+    def fake_find_sensors(**kwargs):
+        nonlocal called
+        called = True
+        return ()
+
+    monkeypatch.setattr(
+        metadata,
+        "find_sensors",
+        fake_find_sensors,
+    )
+
+    items, bindings, errors = resolve_sensor_declarations(
+        config,
+        existing_bindings=model_bindings,
+    )
+
+    assert errors == ()
+    assert not called
+    assert items[0].action == PlanAction.CREATE
+    assert items[0].values.sensor_model == PlannedRef(
+        resource_type="sensor_model",
+        plan_id="sensor_models[0]",
+    )
+    assert bindings[0].resource == PlannedRef(
+        resource_type="sensor",
+        plan_id="sensors[0]",
+    )
+
+
+def test_sensor_reference_reports_ambiguity(monkeypatch):
+    config = ConfigModel(
+        references={
+            "sensors": {
+                "sensor_01": {
+                    "serial_number": "123456",
+                }
+            }
+        }
+    )
+
+    registry = build_alias_registry(config)
+
+    monkeypatch.setattr(
+        metadata,
+        "find_sensors",
+        lambda **kwargs: (
+            MetadataRow(7, {}),
+            MetadataRow(8, {}),
+        ),
+    )
+
+    bindings, errors = resolve_sensor_reference_aliases(
+        registry
+    )
+
+    assert bindings == ()
+    assert errors[0].code == PlanErrorCode.AMBIGUOUS
+    assert errors[0].candidate_ids == (7, 8)
+
+
+def test_existing_sensor_becomes_reuse(monkeypatch):
+    config = ConfigModel(
+        sensors=[
+            {
+                "ref": "sensor_01",
+                "serial_number": "123456",
+                "sensor_model": "cs451",
+            }
+        ]
+    )
+
+    model_bindings = (
+        PlanBinding(
+            resource_type="sensor_models",
+            alias="cs451",
+            resource=ExistingRef(
+                resource_type="sensor_model",
+                database_id=3,
+            ),
+        ),
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_sensors",
+        lambda **kwargs: (
+            MetadataRow(
+                database_id=7,
+                values={
+                    "sensor_model_id": 3,
+                    "serial_number": "123456",
+                    "description": "Existing sensor",
+                },
+            ),
+        ),
+    )
+
+    items, bindings, errors = resolve_sensor_declarations(
+        config,
+        existing_bindings=model_bindings,
+    )
+
+    assert errors == ()
+    assert items[0].action == PlanAction.REUSE
+    assert items[0].database_id == 7
+    assert items[0].values.description == "Existing sensor"
+    assert bindings[0].resource == ExistingRef(
+        resource_type="sensor",
+        database_id=7,
+    )
 
