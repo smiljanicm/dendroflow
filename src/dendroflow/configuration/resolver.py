@@ -1692,3 +1692,221 @@ def _intervals_overlap(
         second_end is None or first_start < second_end
     )
 
+
+def resolve_deployment_reference_aliases(
+    registry: AliasRegistry,
+    existing_bindings: tuple[PlanBinding, ...] = (),
+) -> tuple[
+    tuple[PlanBinding, ...],
+    tuple[PlanError, ...],
+]:
+    """Resolve deployment reference aliases against PostgreSQL."""
+
+    bindings: list[PlanBinding] = []
+    errors: list[PlanError] = []
+
+    for entry in registry.entries:
+        if not isinstance(entry, ReferenceAlias):
+            continue
+
+        if entry.resource_type != "deployments":
+            continue
+
+        sensor_id: int | None = None
+        location_id: int | None = None
+        variable_id: int | None = None
+        invalid_reference = False
+
+        if entry.selector.sensor is not None:
+            sensor_binding = _find_binding(
+                existing_bindings,
+                "sensors",
+                entry.selector.sensor,
+            )
+
+            if sensor_binding is None:
+                errors.append(
+                    PlanError(
+                        code=PlanErrorCode.INVALID_REFERENCE,
+                        resource_type="deployments",
+                        source_path=f"{entry.source_path}.sensor",
+                        message=(
+                            "unable to resolve sensor "
+                            f"{entry.selector.sensor!r}"
+                        ),
+                    )
+                )
+                invalid_reference = True
+            elif isinstance(
+                sensor_binding.resource,
+                PlannedRef,
+            ):
+                errors.append(
+                    PlanError(
+                        code=PlanErrorCode.INVALID_REFERENCE,
+                        resource_type="deployments",
+                        source_path=f"{entry.source_path}.sensor",
+                        message=(
+                            "existing deployment reference cannot "
+                            "use a sensor planned for creation"
+                        ),
+                    )
+                )
+                invalid_reference = True
+            else:
+                sensor_id = (
+                    sensor_binding.resource.database_id
+                )
+
+        if entry.selector.location is not None:
+            location_binding = _find_binding(
+                existing_bindings,
+                "locations",
+                entry.selector.location,
+            )
+
+            if location_binding is None:
+                errors.append(
+                    PlanError(
+                        code=PlanErrorCode.INVALID_REFERENCE,
+                        resource_type="deployments",
+                        source_path=f"{entry.source_path}.location",
+                        message=(
+                            "unable to resolve location "
+                            f"{entry.selector.location!r}"
+                        ),
+                    )
+                )
+                invalid_reference = True
+            elif isinstance(
+                location_binding.resource,
+                PlannedRef,
+            ):
+                errors.append(
+                    PlanError(
+                        code=PlanErrorCode.INVALID_REFERENCE,
+                        resource_type="deployments",
+                        source_path=f"{entry.source_path}.location",
+                        message=(
+                            "existing deployment reference cannot "
+                            "use a location planned for creation"
+                        ),
+                    )
+                )
+                invalid_reference = True
+            else:
+                location_id = (
+                    location_binding.resource.database_id
+                )
+
+        if entry.selector.variable is not None:
+            variable_binding = _find_binding(
+                existing_bindings,
+                "variables",
+                entry.selector.variable,
+            )
+
+            if variable_binding is None:
+                errors.append(
+                    PlanError(
+                        code=PlanErrorCode.INVALID_REFERENCE,
+                        resource_type="deployments",
+                        source_path=f"{entry.source_path}.variable",
+                        message=(
+                            "unable to resolve variable "
+                            f"{entry.selector.variable!r}"
+                        ),
+                    )
+                )
+                invalid_reference = True
+            elif isinstance(
+                variable_binding.resource,
+                PlannedRef,
+            ):
+                errors.append(
+                    PlanError(
+                        code=PlanErrorCode.INVALID_REFERENCE,
+                        resource_type="deployments",
+                        source_path=f"{entry.source_path}.variable",
+                        message=(
+                            "existing deployment reference cannot "
+                            "use a variable planned for creation"
+                        ),
+                    )
+                )
+                invalid_reference = True
+            else:
+                variable_id = (
+                    variable_binding.resource.database_id
+                )
+
+        if invalid_reference:
+            continue
+
+        if (
+            sensor_id is None
+            and location_id is None
+            and variable_id is None
+            and entry.selector.valid_from is None
+        ):
+            errors.append(
+                PlanError(
+                    code=PlanErrorCode.INVALID_REFERENCE,
+                    resource_type="deployments",
+                    source_path=entry.source_path,
+                    message=(
+                        "deployment reference requires at least "
+                        "one identifying field"
+                    ),
+                )
+            )
+            continue
+
+        rows = metadata.find_deployments(
+            sensor_id=sensor_id,
+            location_id=location_id,
+            variable_id=variable_id,
+            valid_from=entry.selector.valid_from,
+        )
+
+        if not rows:
+            errors.append(
+                PlanError(
+                    code=PlanErrorCode.NOT_FOUND,
+                    resource_type="deployments",
+                    source_path=entry.source_path,
+                    message="deployment resource not found",
+                )
+            )
+            continue
+
+        if len(rows) > 1:
+            errors.append(
+                PlanError(
+                    code=PlanErrorCode.AMBIGUOUS,
+                    resource_type="deployments",
+                    source_path=entry.source_path,
+                    message=(
+                        "deployment reference matched "
+                        "multiple resources"
+                    ),
+                    candidate_ids=tuple(
+                        row.database_id for row in rows
+                    ),
+                )
+            )
+            continue
+
+        bindings.append(
+            PlanBinding(
+                resource_type="deployments",
+                alias=entry.alias,
+                resource=ExistingRef(
+                    resource_type="deployment",
+                    database_id=rows[0].database_id,
+                ),
+            )
+        )
+
+    return tuple(bindings), tuple(errors)
+

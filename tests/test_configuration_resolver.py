@@ -15,6 +15,7 @@ from dendroflow.configuration.resolver import (
     DeclarationAlias,
     ReferenceAlias,
     build_alias_registry,
+    resolve_deployment_reference_aliases,
     resolve_location_declarations,
     resolve_location_label_declarations,
     resolve_location_reference_aliases,
@@ -1717,4 +1718,181 @@ def test_top_level_label_explicit_valid_to_difference_conflicts(
 
     assert len(errors) == 1
     assert errors[0].code == PlanErrorCode.CONFLICT
+
+
+def test_deployment_reference_resolves_relational_selectors(
+    monkeypatch,
+):
+    config = ConfigModel(
+        references={
+            "deployments": {
+                "deployment_01": {
+                    "sensor": "sensor_01",
+                    "location": "well_01",
+                    "variable": "water_level",
+                    "valid_from": "2025-04-01T00:00:00Z",
+                }
+            }
+        }
+    )
+
+    registry = build_alias_registry(config)
+
+    existing_bindings = (
+        PlanBinding(
+            resource_type="sensors",
+            alias="sensor_01",
+            resource=ExistingRef(
+                resource_type="sensor",
+                database_id=5,
+            ),
+        ),
+        PlanBinding(
+            resource_type="locations",
+            alias="well_01",
+            resource=ExistingRef(
+                resource_type="location",
+                database_id=3,
+            ),
+        ),
+        PlanBinding(
+            resource_type="variables",
+            alias="water_level",
+            resource=ExistingRef(
+                resource_type="variable",
+                database_id=7,
+            ),
+        ),
+    )
+
+    def fake_find_deployments(**kwargs):
+        assert kwargs["sensor_id"] == 5
+        assert kwargs["location_id"] == 3
+        assert kwargs["variable_id"] == 7
+
+        return (
+            MetadataRow(
+                database_id=12,
+                values={},
+            ),
+        )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_deployments",
+        fake_find_deployments,
+    )
+
+    bindings, errors = resolve_deployment_reference_aliases(
+        registry,
+        existing_bindings,
+    )
+
+    assert errors == ()
+    assert bindings == (
+        PlanBinding(
+            resource_type="deployments",
+            alias="deployment_01",
+            resource=ExistingRef(
+                resource_type="deployment",
+                database_id=12,
+            ),
+        ),
+    )
+
+
+def test_deployment_reference_reports_ambiguity(
+    monkeypatch,
+):
+    config = ConfigModel(
+        references={
+            "deployments": {
+                "deployment_01": {
+                    "sensor": "sensor_01",
+                }
+            }
+        }
+    )
+
+    registry = build_alias_registry(config)
+
+    existing_bindings = (
+        PlanBinding(
+            resource_type="sensors",
+            alias="sensor_01",
+            resource=ExistingRef(
+                resource_type="sensor",
+                database_id=5,
+            ),
+        ),
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_deployments",
+        lambda **kwargs: (
+            MetadataRow(12, {}),
+            MetadataRow(13, {}),
+        ),
+    )
+
+    bindings, errors = resolve_deployment_reference_aliases(
+        registry,
+        existing_bindings,
+    )
+
+    assert bindings == ()
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.AMBIGUOUS
+    assert errors[0].candidate_ids == (12, 13)
+
+
+def test_deployment_reference_rejects_planned_sensor(
+    monkeypatch,
+):
+    config = ConfigModel(
+        references={
+            "deployments": {
+                "deployment_01": {
+                    "sensor": "sensor_01",
+                }
+            }
+        }
+    )
+
+    registry = build_alias_registry(config)
+
+    existing_bindings = (
+        PlanBinding(
+            resource_type="sensors",
+            alias="sensor_01",
+            resource=PlannedRef(
+                resource_type="sensor",
+                plan_id="sensors[0]",
+            ),
+        ),
+    )
+
+    called = False
+
+    def fake_find_deployments(**kwargs):
+        nonlocal called
+        called = True
+        return ()
+
+    monkeypatch.setattr(
+        metadata,
+        "find_deployments",
+        fake_find_deployments,
+    )
+
+    bindings, errors = resolve_deployment_reference_aliases(
+        registry,
+        existing_bindings,
+    )
+
+    assert bindings == ()
+    assert not called
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.INVALID_REFERENCE
 
