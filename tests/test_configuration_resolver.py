@@ -8,8 +8,11 @@ from dendroflow.configuration.plan import (
 )
 from dendroflow.configuration.resolver import (
     DeclarationAlias,
+    PlanBinding,
     ReferenceAlias,
     build_alias_registry,
+    resolve_sensor_model_declarations,
+    resolve_sensor_model_reference_aliases,
     resolve_simple_declarations,
     resolve_simple_reference_aliases,
 )
@@ -565,4 +568,308 @@ def test_existing_child_site_resolves_existing_parent(monkeypatch):
         resource_type="site",
         database_id=10,
     )
+
+
+# Metadata tests
+
+
+def test_sensor_model_reference_resolves_unique_match(
+    monkeypatch,
+):
+    config = ConfigModel(
+        references={
+            "sensor_models": {
+                "cs451": {
+                    "model": "CS451",
+                }
+            }
+        }
+    )
+
+    registry = build_alias_registry(config)
+
+    monkeypatch.setattr(
+        metadata,
+        "find_sensor_models",
+        lambda **kwargs: (
+            MetadataRow(
+                database_id=3,
+                values={
+                    "model": "CS451",
+                    "manufacturer": "Campbell Scientific",
+                    "sensor_type_id": 1,
+                },
+            ),
+        ),
+    )
+
+    bindings, errors = (
+        resolve_sensor_model_reference_aliases(registry)
+    )
+
+    assert errors == ()
+    assert bindings[0].resource == ExistingRef(
+        resource_type="sensor_model",
+        database_id=3,
+    )
+
+
+def test_sensor_model_reference_reports_ambiguity(
+    monkeypatch,
+):
+    config = ConfigModel(
+        references={
+            "sensor_models": {
+                "cs451": {
+                    "model": "CS451",
+                }
+            }
+        }
+    )
+
+    registry = build_alias_registry(config)
+
+    monkeypatch.setattr(
+        metadata,
+        "find_sensor_models",
+        lambda **kwargs: (
+            MetadataRow(3, {}),
+            MetadataRow(8, {}),
+        ),
+    )
+
+    bindings, errors = (
+        resolve_sensor_model_reference_aliases(registry)
+    )
+
+    assert bindings == ()
+    assert errors[0].code == PlanErrorCode.AMBIGUOUS
+    assert errors[0].candidate_ids == (3, 8)
+
+
+def test_sensor_model_reference_reports_not_found(
+    monkeypatch,
+):
+    config = ConfigModel(
+        references={
+            "sensor_models": {
+                "cs451": {
+                    "manufacturer": "Campbell Scientific",
+                    "model": "CS451",
+                }
+            }
+        }
+    )
+
+    registry = build_alias_registry(config)
+
+    monkeypatch.setattr(
+        metadata,
+        "find_sensor_models",
+        lambda **kwargs: (),
+    )
+
+    bindings, errors = (
+        resolve_sensor_model_reference_aliases(registry)
+    )
+
+    assert bindings == ()
+    assert errors[0].code == PlanErrorCode.NOT_FOUND
+
+
+def test_new_sensor_model_becomes_create(
+    monkeypatch,
+):
+    config = ConfigModel(
+        sensor_models=[
+            {
+                "ref": "cs451",
+                "manufacturer": "Campbell Scientific",
+                "model": "CS451",
+                "sensor_type": "water_level",
+            }
+        ]
+    )
+
+    sensor_type_bindings = (
+        PlanBinding(
+            resource_type="sensor_types",
+            alias="water_level",
+            resource=ExistingRef(
+                resource_type="sensor_type",
+                database_id=1,
+            ),
+        ),
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_sensor_models",
+        lambda **kwargs: (),
+    )
+
+    items, bindings, errors = (
+        resolve_sensor_model_declarations(
+            config,
+            existing_bindings=sensor_type_bindings,
+        )
+    )
+
+    assert errors == ()
+    assert items[0].action == PlanAction.CREATE
+    assert items[0].values.sensor_type == ExistingRef(
+        resource_type="sensor_type",
+        database_id=1,
+    )
+    assert bindings[0].resource == PlannedRef(
+        resource_type="sensor_model",
+        plan_id="sensor_models[0]",
+    )
+
+
+def test_new_sensor_model_can_use_planned_sensor_type(
+    monkeypatch,
+):
+    config = ConfigModel(
+        sensor_models=[
+            {
+                "manufacturer": "TEST",
+                "model": "MODEL",
+                "sensor_type": "new_type",
+            }
+        ]
+    )
+
+    sensor_type_bindings = (
+        PlanBinding(
+            resource_type="sensor_types",
+            alias="new_type",
+            resource=PlannedRef(
+                resource_type="sensor_type",
+                plan_id="sensor_types[0]",
+            ),
+        ),
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_sensor_models",
+        lambda **kwargs: (),
+    )
+
+    items, _, errors = resolve_sensor_model_declarations(
+        config,
+        existing_bindings=sensor_type_bindings,
+    )
+
+    assert errors == ()
+    assert items[0].values.sensor_type == PlannedRef(
+        resource_type="sensor_type",
+        plan_id="sensor_types[0]",
+    )
+
+
+def test_existing_sensor_model_becomes_reuse(
+    monkeypatch,
+):
+    config = ConfigModel(
+        sensor_models=[
+            {
+                "ref": "cs451",
+                "manufacturer": "Campbell Scientific",
+                "model": "CS451",
+                "sensor_type": "water_level",
+            }
+        ]
+    )
+
+    sensor_type_bindings = (
+        PlanBinding(
+            resource_type="sensor_types",
+            alias="water_level",
+            resource=ExistingRef(
+                resource_type="sensor_type",
+                database_id=1,
+            ),
+        ),
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_sensor_models",
+        lambda **kwargs: (
+            MetadataRow(
+                database_id=3,
+                values={
+                    "model": "CS451",
+                    "manufacturer": "Campbell Scientific",
+                    "sensor_type_id": 1,
+                },
+            ),
+        ),
+    )
+
+    items, bindings, errors = (
+        resolve_sensor_model_declarations(
+            config,
+            existing_bindings=sensor_type_bindings,
+        )
+    )
+
+    assert errors == ()
+    assert items[0].action == PlanAction.REUSE
+    assert items[0].database_id == 3
+    assert bindings[0].resource == ExistingRef(
+        resource_type="sensor_model",
+        database_id=3,
+    )
+
+
+def test_existing_sensor_model_reports_sensor_type_conflict(
+    monkeypatch,
+):
+    config = ConfigModel(
+        sensor_models=[
+            {
+                "manufacturer": "Campbell Scientific",
+                "model": "CS451",
+                "sensor_type": "requested_type",
+            }
+        ]
+    )
+
+    sensor_type_bindings = (
+        PlanBinding(
+            resource_type="sensor_types",
+            alias="requested_type",
+            resource=ExistingRef(
+                resource_type="sensor_type",
+                database_id=2,
+            ),
+        ),
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_sensor_models",
+        lambda **kwargs: (
+            MetadataRow(
+                database_id=3,
+                values={
+                    "model": "CS451",
+                    "manufacturer": "Campbell Scientific",
+                    "sensor_type_id": 1,
+                },
+            ),
+        ),
+    )
+
+    items, _, errors = resolve_sensor_model_declarations(
+        config,
+        existing_bindings=sensor_type_bindings,
+    )
+
+    assert items[0].action == PlanAction.REUSE
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
 
