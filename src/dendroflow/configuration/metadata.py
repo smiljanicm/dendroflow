@@ -123,3 +123,55 @@ def find_variable(variable: str) -> MetadataRow | None:
     )
 
 
+def find_sensor_models(
+    *,
+    manufacturer: str | None = None,
+    model: str | None = None,
+) -> tuple[MetadataRow, ...]:
+    """Find sensor models matching the supplied identifying fields."""
+
+    conditions: list[str] = []
+    parameters: list[object] = []
+
+    if manufacturer is not None:
+        conditions.append("manufacturer = %s")
+        parameters.append(manufacturer)
+
+    if model is not None:
+        conditions.append("model = %s")
+        parameters.append(model)
+
+    if not conditions:
+        raise ValueError(
+            "sensor model lookup requires manufacturer or model"
+        )
+
+    where_clause = " AND ".join(conditions)
+
+    with connect("dendroflow_metadata") as connection:
+        rows = connection.execute(
+            f"""
+            SELECT
+                sensor_model_id,
+                model,
+                manufacturer,
+                sensor_type_id
+            FROM sensor_models
+            WHERE {where_clause}
+            ORDER BY sensor_model_id
+            """,
+            tuple(parameters),
+        ).fetchall()
+
+    return tuple(
+        MetadataRow(
+            database_id=row[0],
+            values={
+                "model": row[1],
+                "manufacturer": row[2],
+                "sensor_type_id": row[3],
+            },
+        )
+        for row in rows
+    )
+

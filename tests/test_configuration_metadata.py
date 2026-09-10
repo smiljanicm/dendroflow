@@ -1,12 +1,29 @@
+import pytest
+
 from dendroflow.configuration import metadata
 
 
 class FakeResult:
-    def __init__(self, row):
-        self.row = row
+    def __init__(self, rows):
+        self.rows = rows
 
     def fetchone(self):
-        return self.row
+        if self.rows is None:
+            return None
+
+        if isinstance(self.rows, list):
+            return self.rows[0] if self.rows else None
+
+        return self.rows
+
+    def fetchall(self):
+        if self.rows is None:
+            return []
+
+        if isinstance(self.rows, list):
+            return self.rows
+
+        return [self.rows]
 
 
 class FakeConnection:
@@ -115,5 +132,98 @@ def test_find_variable_returns_full_existing_state(monkeypatch):
         "derived": False,
         "description": "Water level",
     }
+
+
+def test_find_sensor_models_by_manufacturer_and_model(monkeypatch):
+    connection = FakeConnection(
+        [
+            (
+                3,
+                "CS451",
+                "Campbell Scientific",
+                1,
+            )
+        ]
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "connect",
+        lambda database: connection,
+    )
+
+    result = metadata.find_sensor_models(
+        manufacturer="Campbell Scientific",
+        model="CS451",
+    )
+
+    assert len(result) == 1
+    assert result[0].database_id == 3
+    assert result[0].values == {
+        "model": "CS451",
+        "manufacturer": "Campbell Scientific",
+        "sensor_type_id": 1,
+    }
+    assert connection.parameters == (
+        "Campbell Scientific",
+        "CS451",
+    )
+    assert "ORDER BY sensor_model_id" in connection.query
+
+
+def test_find_sensor_models_by_model_can_return_multiple(
+    monkeypatch,
+):
+    connection = FakeConnection(
+        [
+            (3, "CS451", "Campbell Scientific", 1),
+            (8, "CS451", "Other Manufacturer", 2),
+        ]
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "connect",
+        lambda database: connection,
+    )
+
+    result = metadata.find_sensor_models(
+        model="CS451"
+    )
+
+    assert len(result) == 2
+    assert connection.parameters == ("CS451",)
+
+
+def test_find_sensor_models_by_manufacturer(monkeypatch):
+    connection = FakeConnection(
+        [
+            (3, "CS451", "Campbell Scientific", 1),
+            (4, "CR1000", "Campbell Scientific", 2),
+        ]
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "connect",
+        lambda database: connection,
+    )
+
+    result = metadata.find_sensor_models(
+        manufacturer="Campbell Scientific"
+    )
+
+    assert len(result) == 2
+    assert connection.parameters == (
+        "Campbell Scientific",
+    )
+
+
+def test_find_sensor_models_requires_selector():
+    with pytest.raises(
+        ValueError,
+        match="requires manufacturer or model",
+    ):
+        metadata.find_sensor_models()
 
 
