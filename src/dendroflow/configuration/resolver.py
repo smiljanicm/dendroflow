@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 
 from . import metadata
 from .metadata import MetadataRow
@@ -10,6 +11,7 @@ from .plan import (
     PlanError,
     PlanErrorCode,
     PlannedRef,
+    ResolvedLocationLabelValues,
     ResolvedLocationTypeValues,
     ResolvedLocationValues,
     ResolvedPlanItem,
@@ -1374,4 +1376,319 @@ def resolve_location_declarations(
 
     return tuple(items), tuple(bindings), tuple(errors)
 
+
+def resolve_location_label_declarations(
+    config: ConfigModel,
+    location_items: tuple[ResolvedPlanItem, ...],
+    existing_bindings: tuple[PlanBinding, ...] = (),
+) -> tuple[
+    tuple[ResolvedPlanItem, ...],
+    tuple[PlanError, ...],
+]:
+    """Resolve initial and explicit location label declarations."""
+
+    items: list[ResolvedPlanItem] = []
+    errors: list[PlanError] = []
+
+    location_items_by_plan_id = {
+        item.plan_id: item
+        for item in location_items
+        if item.resource_type == "location"
+    }
+
+    # Nested initial labels.
+    for index, declaration in enumerate(config.locations):
+        location_plan_id = f"locations[{index}]"
+        label_plan_id = f"{location_plan_id}.initial_label"
+
+        location_item = location_items_by_plan_id.get(
+            location_plan_id
+        )
+
+        # Location resolution already failed.
+        if location_item is None:
+            continue
+
+        if location_item.action == PlanAction.CREATE:
+            location_ref: ResourceRef = PlannedRef(
+                resource_type="location",
+                plan_id=location_item.plan_id,
+            )
+
+            values = ResolvedLocationLabelValues(
+                location=location_ref,
+                label=declaration.initial_label.label,
+                valid_from=declaration.initial_label.valid_from,
+                valid_to=declaration.initial_label.valid_to,
+            )
+
+            items.append(
+                ResolvedPlanItem(
+                    plan_id=label_plan_id,
+                    resource_type="location_label",
+                    action=PlanAction.CREATE,
+                    values=values,
+                    source_path=label_plan_id,
+                )
+            )
+            continue
+
+        assert location_item.database_id is not None
+
+        location_ref = ExistingRef(
+            resource_type="location",
+            database_id=location_item.database_id,
+        )
+
+        rows = metadata.find_location_labels(
+            location_item.database_id
+        )
+
+        if not rows:
+            errors.append(
+                PlanError(
+                    code=PlanErrorCode.NOT_FOUND,
+                    resource_type="location_label",
+                    source_path=label_plan_id,
+                    message=(
+                        "existing location has no initial label"
+                    ),
+                )
+            )
+            continue
+
+        # D3g1 guarantees chronological ordering.
+        row = rows[0]
+
+        errors.extend(
+            _compare_explicit_fields(
+                declaration.initial_label,
+                row,
+                (
+                    "label",
+                    "valid_from",
+                    "valid_to",
+                ),
+                label_plan_id,
+                "location_label",
+            )
+        )
+
+        values = ResolvedLocationLabelValues(
+            location=location_ref,
+            label=row.values["label"],
+            valid_from=row.values["valid_from"],
+            valid_to=row.values["valid_to"],
+        )
+
+        items.append(
+            ResolvedPlanItem(
+                plan_id=label_plan_id,
+                resource_type="location_label",
+                action=PlanAction.REUSE,
+                database_id=row.database_id,
+                values=values,
+                source_path=label_plan_id,
+            )
+        )
+
+    # Explicit top-level location_labels come next.
+    
+        # Explicit top-level location labels.
+    for index, declaration in enumerate(config.location_labels):
+        plan_id = f"location_labels[{index}]"
+
+        location_binding = _find_binding(
+            existing_bindings,
+            "locations",
+            declaration.location,
+        )
+
+        if location_binding is None:
+            errors.append(
+                PlanError(
+                    code=PlanErrorCode.INVALID_REFERENCE,
+                    resource_type="location_label",
+                    source_path=f"{plan_id}.location",
+                    message=(
+                        "unable to resolve location "
+                        f"{declaration.location!r}"
+                    ),
+                )
+            )
+            continue
+
+        location_ref = location_binding.resource
+
+        # First protect against overlap with labels already planned
+        # by this configuration, including nested initial labels.
+        planned_overlap = next(
+            (
+                item
+                for item in items
+                if (
+                    item.resource_type == "location_label"
+                    and isinstance(
+                        item.values,
+                        ResolvedLocationLabelValues,
+                    )
+                    and item.values.location == location_ref
+                    and item.action == PlanAction.CREATE
+                    and _intervals_overlap(
+                        declaration.valid_from,
+                        declaration.valid_to,
+                        item.values.valid_from,
+                        item.values.valid_to,
+                    )
+                )
+            ),
+            None,
+        )
+
+        if planned_overlap is not None:
+            errors.append(
+                PlanError(
+                    code=PlanErrorCode.CONFLICT,
+                    resource_type="location_label",
+                    source_path=plan_id,
+                    message=(
+                        "location label validity overlaps "
+                        f"{planned_overlap.source_path}"
+                    ),
+                )
+            )
+            continue
+
+        # A planned location cannot have persisted label history.
+        if isinstance(location_ref, PlannedRef):
+            items.append(
+                ResolvedPlanItem(
+                    plan_id=plan_id,
+                    resource_type="location_label",
+                    action=PlanAction.CREATE,
+                    values=ResolvedLocationLabelValues(
+                        location=location_ref,
+                        label=declaration.label,
+                        valid_from=declaration.valid_from,
+                        valid_to=declaration.valid_to,
+                    ),
+                    source_path=plan_id,
+                )
+            )
+            continue
+
+        rows = metadata.find_location_labels(
+            location_ref.database_id
+        )
+
+        same_start = next(
+            (
+                row
+                for row in rows
+                if row.values["valid_from"]
+                == declaration.valid_from
+            ),
+            None,
+        )
+
+        if same_start is not None:
+            if declaration.label != same_start.values["label"]:
+                errors.append(
+                    _conflict(
+                        plan_id,
+                        "location_label",
+                        "label",
+                        same_start.values["label"],
+                        declaration.label,
+                    )
+                )
+
+            errors.extend(
+                _compare_explicit_fields(
+                    declaration,
+                    same_start,
+                    ("valid_to",),
+                    plan_id,
+                    "location_label",
+                )
+            )
+
+            items.append(
+                ResolvedPlanItem(
+                    plan_id=plan_id,
+                    resource_type="location_label",
+                    action=PlanAction.REUSE,
+                    database_id=same_start.database_id,
+                    values=ResolvedLocationLabelValues(
+                        location=location_ref,
+                        label=same_start.values["label"],
+                        valid_from=same_start.values[
+                            "valid_from"
+                        ],
+                        valid_to=same_start.values["valid_to"],
+                    ),
+                    source_path=plan_id,
+                )
+            )
+            continue
+
+        overlapping_row = next(
+            (
+                row
+                for row in rows
+                if _intervals_overlap(
+                    declaration.valid_from,
+                    declaration.valid_to,
+                    row.values["valid_from"],
+                    row.values["valid_to"],
+                )
+            ),
+            None,
+        )
+
+        if overlapping_row is not None:
+            errors.append(
+                PlanError(
+                    code=PlanErrorCode.CONFLICT,
+                    resource_type="location_label",
+                    source_path=plan_id,
+                    message=(
+                        "location label validity overlaps "
+                        "existing location label "
+                        f"{overlapping_row.database_id}"
+                    ),
+                )
+            )
+            continue
+
+        items.append(
+            ResolvedPlanItem(
+                plan_id=plan_id,
+                resource_type="location_label",
+                action=PlanAction.CREATE,
+                values=ResolvedLocationLabelValues(
+                    location=location_ref,
+                    label=declaration.label,
+                    valid_from=declaration.valid_from,
+                    valid_to=declaration.valid_to,
+                ),
+                source_path=plan_id,
+            )
+        )
+
+    return tuple(items), tuple(errors)
+
+def _intervals_overlap(
+    first_start: datetime,
+    first_end: datetime | None,
+    second_start: datetime,
+    second_end: datetime | None,
+) -> bool:
+    """Return whether two half-open time intervals overlap."""
+
+    return (
+        first_end is None or second_start < first_end
+    ) and (
+        second_end is None or first_start < second_end
+    )
 

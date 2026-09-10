@@ -1,17 +1,22 @@
+from datetime import datetime, timezone
+
 from dendroflow.configuration import ConfigModel, metadata, validate_config
 from dendroflow.configuration.metadata import MetadataRow
 from dendroflow.configuration.plan import (
     ExistingRef,
     PlanAction,
+    PlanBinding,
     PlanErrorCode,
     PlannedRef,
+    ResolvedLocationValues,
+    ResolvedPlanItem,
 )
 from dendroflow.configuration.resolver import (
     DeclarationAlias,
-    PlanBinding,
     ReferenceAlias,
     build_alias_registry,
     resolve_location_declarations,
+    resolve_location_label_declarations,
     resolve_location_reference_aliases,
     resolve_sensor_declarations,
     resolve_sensor_model_declarations,
@@ -1180,4 +1185,536 @@ def test_location_reference_reports_ambiguity(monkeypatch):
     assert errors[0].code == PlanErrorCode.AMBIGUOUS
     assert errors[0].candidate_ids == (3, 7)
 
+
+def test_initial_label_for_new_location_becomes_create():
+    config = ConfigModel(
+        locations=[
+            {
+                "site": "sandhagen",
+                "location_type": "well",
+                "initial_label": {
+                    "label": "Well 01",
+                    "valid_from": "2025-01-01T00:00:00Z",
+                },
+            }
+        ]
+    )
+
+    location_items = (
+        ResolvedPlanItem(
+            plan_id="locations[0]",
+            resource_type="location",
+            action=PlanAction.CREATE,
+            values=ResolvedLocationValues(
+                site=PlannedRef(
+                    resource_type="site",
+                    plan_id="sites[0]",
+                ),
+                location_type=ExistingRef(
+                    resource_type="location_type",
+                    database_id=2,
+                ),
+                latitude=None,
+                longitude=None,
+                height_above_ground=None,
+                azimuth=None,
+            ),
+            source_path="locations[0]",
+        ),
+    )
+
+    items, errors = resolve_location_label_declarations(
+        config,
+        location_items,
+    )
+
+    assert errors == ()
+    assert len(items) == 1
+    assert items[0].action == PlanAction.CREATE
+    assert items[0].plan_id == "locations[0].initial_label"
+    assert items[0].values.location == PlannedRef(
+        resource_type="location",
+        plan_id="locations[0]",
+    )
+
+
+def test_existing_initial_label_becomes_reuse(monkeypatch):
+    config = ConfigModel(
+        locations=[
+            {
+                "site": "sandhagen",
+                "location_type": "well",
+                "initial_label": {
+                    "label": "Well 01",
+                    "valid_from": "2025-01-01T00:00:00Z",
+                },
+            }
+        ]
+    )
+
+    location_items = (
+        ResolvedPlanItem(
+            plan_id="locations[0]",
+            resource_type="location",
+            action=PlanAction.REUSE,
+            database_id=3,
+            values=ResolvedLocationValues(
+                site=ExistingRef(
+                    resource_type="site",
+                    database_id=1,
+                ),
+                location_type=ExistingRef(
+                    resource_type="location_type",
+                    database_id=2,
+                ),
+                latitude=None,
+                longitude=None,
+                height_above_ground=None,
+                azimuth=None,
+            ),
+            source_path="locations[0]",
+        ),
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_location_labels",
+        lambda location_id: (
+            MetadataRow(
+                database_id=10,
+                values={
+                    "location_id": 3,
+                    "label": "Well 01",
+                    "valid_from": config.locations[
+                        0
+                    ].initial_label.valid_from,
+                    "valid_to": None,
+                },
+            ),
+        ),
+    )
+
+    items, errors = resolve_location_label_declarations(
+        config,
+        location_items,
+    )
+
+    assert errors == ()
+    assert items[0].action == PlanAction.REUSE
+    assert items[0].database_id == 10
+
+
+def test_top_level_label_for_planned_location_becomes_create():
+    config = ConfigModel(
+        location_labels=[
+            {
+                "location": "well_01",
+                "label": "Well B",
+                "valid_from": "2026-01-01T00:00:00Z",
+            }
+        ]
+    )
+
+    location_ref = PlannedRef(
+        resource_type="location",
+        plan_id="locations[0]",
+    )
+
+    existing_bindings = (
+        PlanBinding(
+            resource_type="locations",
+            alias="well_01",
+            resource=location_ref,
+        ),
+    )
+
+    items, errors = resolve_location_label_declarations(
+        config,
+        location_items=(),
+        existing_bindings=existing_bindings,
+    )
+
+    assert errors == ()
+    assert len(items) == 1
+
+    item = items[0]
+
+    assert item.plan_id == "location_labels[0]"
+    assert item.resource_type == "location_label"
+    assert item.action == PlanAction.CREATE
+    assert item.values.location == location_ref
+    assert item.values.label == "Well B"
+
+
+def test_top_level_label_requires_location_binding():
+    config = ConfigModel(
+        location_labels=[
+            {
+                "location": "missing_location",
+                "label": "Well B",
+                "valid_from": "2026-01-01T00:00:00Z",
+            }
+        ]
+    )
+
+    items, errors = resolve_location_label_declarations(
+        config,
+        location_items=(),
+    )
+
+    assert items == ()
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.INVALID_REFERENCE
+    assert errors[0].resource_type == "location_label"
+    assert errors[0].source_path == "location_labels[0].location"
+
+
+def test_top_level_existing_label_becomes_reuse(monkeypatch):
+    valid_from = datetime(
+        2026,
+        1,
+        1,
+        tzinfo=timezone.utc,
+    )
+
+    config = ConfigModel(
+        location_labels=[
+            {
+                "location": "well_01",
+                "label": "Well B",
+                "valid_from": valid_from,
+            }
+        ]
+    )
+
+    existing_bindings = (
+        PlanBinding(
+            resource_type="locations",
+            alias="well_01",
+            resource=ExistingRef(
+                resource_type="location",
+                database_id=3,
+            ),
+        ),
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_location_labels",
+        lambda location_id: (
+            MetadataRow(
+                database_id=11,
+                values={
+                    "location_id": 3,
+                    "label": "Well B",
+                    "valid_from": valid_from,
+                    "valid_to": None,
+                },
+            ),
+        ),
+    )
+
+    items, errors = resolve_location_label_declarations(
+        config,
+        location_items=(),
+        existing_bindings=existing_bindings,
+    )
+
+    assert errors == ()
+    assert len(items) == 1
+
+    assert items[0].action == PlanAction.REUSE
+    assert items[0].database_id == 11
+    assert items[0].values.label == "Well B"
+
+
+def test_top_level_label_same_start_different_label_conflicts(
+    monkeypatch,
+):
+    valid_from = datetime(
+        2026,
+        1,
+        1,
+        tzinfo=timezone.utc,
+    )
+
+    config = ConfigModel(
+        location_labels=[
+            {
+                "location": "well_01",
+                "label": "New label",
+                "valid_from": valid_from,
+            }
+        ]
+    )
+
+    existing_bindings = (
+        PlanBinding(
+            resource_type="locations",
+            alias="well_01",
+            resource=ExistingRef(
+                resource_type="location",
+                database_id=3,
+            ),
+        ),
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_location_labels",
+        lambda location_id: (
+            MetadataRow(
+                database_id=11,
+                values={
+                    "location_id": 3,
+                    "label": "Old label",
+                    "valid_from": valid_from,
+                    "valid_to": None,
+                },
+            ),
+        ),
+    )
+
+    items, errors = resolve_location_label_declarations(
+        config,
+        location_items=(),
+        existing_bindings=existing_bindings,
+    )
+
+    assert len(items) == 1
+    assert items[0].action == PlanAction.REUSE
+    assert items[0].database_id == 11
+
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+
+
+def test_top_level_non_overlapping_label_becomes_create(
+    monkeypatch,
+):
+    config = ConfigModel(
+        location_labels=[
+            {
+                "location": "well_01",
+                "label": "Well B",
+                "valid_from": "2026-01-01T00:00:00Z",
+            }
+        ]
+    )
+
+    existing_bindings = (
+        PlanBinding(
+            resource_type="locations",
+            alias="well_01",
+            resource=ExistingRef(
+                resource_type="location",
+                database_id=3,
+            ),
+        ),
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_location_labels",
+        lambda location_id: (
+            MetadataRow(
+                database_id=10,
+                values={
+                    "location_id": 3,
+                    "label": "Well A",
+                    "valid_from": datetime(
+                        2025,
+                        1,
+                        1,
+                        tzinfo=timezone.utc,
+                    ),
+                    "valid_to": datetime(
+                        2026,
+                        1,
+                        1,
+                        tzinfo=timezone.utc,
+                    ),
+                },
+            ),
+        ),
+    )
+
+    items, errors = resolve_location_label_declarations(
+        config,
+        location_items=(),
+        existing_bindings=existing_bindings,
+    )
+
+    assert errors == ()
+    assert len(items) == 1
+    assert items[0].action == PlanAction.CREATE
+    assert items[0].values.label == "Well B"
+
+
+def test_top_level_label_overlapping_existing_history_conflicts(
+    monkeypatch,
+):
+    config = ConfigModel(
+        location_labels=[
+            {
+                "location": "well_01",
+                "label": "Well B",
+                "valid_from": "2025-06-01T00:00:00Z",
+            }
+        ]
+    )
+
+    existing_bindings = (
+        PlanBinding(
+            resource_type="locations",
+            alias="well_01",
+            resource=ExistingRef(
+                resource_type="location",
+                database_id=3,
+            ),
+        ),
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_location_labels",
+        lambda location_id: (
+            MetadataRow(
+                database_id=10,
+                values={
+                    "location_id": 3,
+                    "label": "Well A",
+                    "valid_from": datetime(
+                        2025,
+                        1,
+                        1,
+                        tzinfo=timezone.utc,
+                    ),
+                    "valid_to": None,
+                },
+            ),
+        ),
+    )
+
+    items, errors = resolve_location_label_declarations(
+        config,
+        location_items=(),
+        existing_bindings=existing_bindings,
+    )
+
+    assert items == ()
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+    assert errors[0].resource_type == "location_label"
+
+
+def test_top_level_labels_overlapping_planned_label_conflict():
+    config = ConfigModel(
+        location_labels=[
+            {
+                "location": "well_01",
+                "label": "Well A",
+                "valid_from": "2025-01-01T00:00:00Z",
+                "valid_to": "2026-01-01T00:00:00Z",
+            },
+            {
+                "location": "well_01",
+                "label": "Well B",
+                "valid_from": "2025-06-01T00:00:00Z",
+            },
+        ]
+    )
+
+    location_ref = PlannedRef(
+        resource_type="location",
+        plan_id="locations[0]",
+    )
+
+    existing_bindings = (
+        PlanBinding(
+            resource_type="locations",
+            alias="well_01",
+            resource=location_ref,
+        ),
+    )
+
+    items, errors = resolve_location_label_declarations(
+        config,
+        location_items=(),
+        existing_bindings=existing_bindings,
+    )
+
+    assert len(items) == 1
+    assert items[0].plan_id == "location_labels[0]"
+    assert items[0].action == PlanAction.CREATE
+
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+    assert errors[0].source_path == "location_labels[1]"
+
+
+def test_top_level_label_explicit_valid_to_difference_conflicts(
+    monkeypatch,
+):
+    valid_from = datetime(
+        2026,
+        1,
+        1,
+        tzinfo=timezone.utc,
+    )
+
+    config = ConfigModel(
+        location_labels=[
+            {
+                "location": "well_01",
+                "label": "Well B",
+                "valid_from": valid_from,
+                "valid_to": None,
+            }
+        ]
+    )
+
+    existing_bindings = (
+        PlanBinding(
+            resource_type="locations",
+            alias="well_01",
+            resource=ExistingRef(
+                resource_type="location",
+                database_id=3,
+            ),
+        ),
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_location_labels",
+        lambda location_id: (
+            MetadataRow(
+                database_id=11,
+                values={
+                    "location_id": 3,
+                    "label": "Well B",
+                    "valid_from": valid_from,
+                    "valid_to": datetime(
+                        2027,
+                        1,
+                        1,
+                        tzinfo=timezone.utc,
+                    ),
+                },
+            ),
+        ),
+    )
+
+    items, errors = resolve_location_label_declarations(
+        config,
+        location_items=(),
+        existing_bindings=existing_bindings,
+    )
+
+    assert len(items) == 1
+    assert items[0].action == PlanAction.REUSE
+
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
 
