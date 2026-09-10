@@ -175,3 +175,56 @@ def find_sensor_models(
         for row in rows
     )
 
+
+def find_sensors(
+    *,
+    serial_number: str | None = None,
+    sensor_model_id: int | None = None,
+) -> tuple[MetadataRow, ...]:
+    """Find sensors matching the supplied identifying fields."""
+
+    conditions: list[str] = []
+    parameters: list[object] = []
+
+    if serial_number is not None:
+        conditions.append("serial_number = %s")
+        parameters.append(serial_number)
+
+    if sensor_model_id is not None:
+        conditions.append("sensor_model_id = %s")
+        parameters.append(sensor_model_id)
+
+    if not conditions:
+        raise ValueError(
+            "sensor lookup requires serial_number or sensor_model_id"
+        )
+
+    where_clause = " AND ".join(conditions)
+
+    with connect("dendroflow_metadata") as connection:
+        rows = connection.execute(
+            f"""
+            SELECT
+                sensor_id,
+                sensor_model_id,
+                serial_number,
+                description
+            FROM sensors
+            WHERE {where_clause}
+            ORDER BY sensor_id
+            """,
+            tuple(parameters),
+        ).fetchall()
+
+    return tuple(
+        MetadataRow(
+            database_id=row[0],
+            values={
+                "sensor_model_id": row[1],
+                "serial_number": row[2],
+                "description": row[3],
+            },
+        )
+        for row in rows
+    )
+

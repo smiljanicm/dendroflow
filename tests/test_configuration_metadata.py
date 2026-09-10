@@ -227,3 +227,87 @@ def test_find_sensor_models_requires_selector():
         metadata.find_sensor_models()
 
 
+def test_find_sensors_by_exact_identity(monkeypatch):
+    connection = FakeConnection(
+        [
+            (
+                7,
+                3,
+                "123456",
+                "Water level sensor",
+            )
+        ]
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "connect",
+        lambda database: connection,
+    )
+
+    result = metadata.find_sensors(
+        serial_number="123456",
+        sensor_model_id=3,
+    )
+
+    assert len(result) == 1
+    assert result[0].database_id == 7
+    assert result[0].values == {
+        "sensor_model_id": 3,
+        "serial_number": "123456",
+        "description": "Water level sensor",
+    }
+    assert connection.parameters == ("123456", 3)
+
+
+def test_find_sensors_by_serial_can_return_multiple(monkeypatch):
+    connection = FakeConnection(
+        [
+            (7, 3, "123456", None),
+            (8, 4, "123456", None),
+        ]
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "connect",
+        lambda database: connection,
+    )
+
+    result = metadata.find_sensors(
+        serial_number="123456"
+    )
+
+    assert len(result) == 2
+    assert connection.parameters == ("123456",)
+
+
+def test_find_sensors_by_sensor_model(monkeypatch):
+    connection = FakeConnection(
+        [
+            (7, 3, "123456", None),
+            (9, 3, "987654", None),
+        ]
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "connect",
+        lambda database: connection,
+    )
+
+    result = metadata.find_sensors(
+        sensor_model_id=3
+    )
+
+    assert len(result) == 2
+    assert connection.parameters == (3,)
+
+
+def test_find_sensors_requires_selector():
+    with pytest.raises(
+        ValueError,
+        match="requires serial_number or sensor_model_id",
+    ):
+        metadata.find_sensors()
+
