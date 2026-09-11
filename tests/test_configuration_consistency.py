@@ -82,7 +82,7 @@ def _sensor_update_item(
     )
 
 
-# Failing initially - clean after update
+## Failing initially - clean after update
 def test_duplicate_sensor_update_target_conflicts():
     first = _sensor_update_item(
         "updates.sensors[0]",
@@ -109,7 +109,7 @@ def test_duplicate_sensor_update_target_conflicts():
     assert error.resource_type == "sensor"
 
 
-# Clean test
+## Clean test
 def test_different_sensor_update_targets_are_consistent():
     first = _sensor_update_item(
         "updates.sensors[0]",
@@ -131,7 +131,7 @@ def test_different_sensor_update_targets_are_consistent():
     assert errors == ()
 
 
-# Clean test
+## Clean test
 def test_reuse_and_update_same_sensor_are_consistent():
     reuse = ResolvedPlanItem(
         plan_id="sensors[0]",
@@ -164,7 +164,7 @@ def test_reuse_and_update_same_sensor_are_consistent():
     assert errors == ()
 
 
-# Clean test
+## Clean test
 def test_duplicate_deployment_update_target_conflicts():
     first = ResolvedPlanItem(
         plan_id="updates.deployments[0]",
@@ -267,5 +267,148 @@ def test_duplicate_deployment_update_target_conflicts():
     assert errors[0].source_path == (
         "updates.deployments[1]"
     )
+
+
+def _sensor_create_item(
+    plan_id: str,
+    serial_number: str,
+    sensor_model_id: int = 3,
+) -> ResolvedPlanItem:
+    return ResolvedPlanItem(
+        plan_id=plan_id,
+        resource_type="sensor",
+        action=PlanAction.CREATE,
+        values=ResolvedSensorValues(
+            sensor_model=ExistingRef(
+                resource_type="sensor_model",
+                database_id=sensor_model_id,
+            ),
+            serial_number=serial_number,
+            description=None,
+        ),
+        source_path=plan_id,
+    )
+
+
+## Failing initially - clean after update
+def test_sensor_updates_with_same_final_identity_conflict():
+    first = _sensor_update_item(
+        "updates.sensors[0]",
+        17,
+        "NEW123",
+    )
+    second = _sensor_update_item(
+        "updates.sensors[1]",
+        18,
+        "NEW123",
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(first, second),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert len(errors) == 1
+
+    error = errors[0]
+
+    assert error.code == PlanErrorCode.CONFLICT
+    assert error.resource_type == "sensor"
+    assert error.source_path == "updates.sensors[1]"
+
+
+## Clean test
+def test_sensor_updates_with_different_final_identities_are_consistent():
+    first = _sensor_update_item(
+        "updates.sensors[0]",
+        17,
+        "NEW_A",
+    )
+    second = _sensor_update_item(
+        "updates.sensors[1]",
+        18,
+        "NEW_B",
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(first, second),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert errors == ()
+
+
+## Failing initially - clean after update
+def test_sensor_create_and_update_with_same_final_identity_conflict():
+    created = _sensor_create_item(
+        "sensors[0]",
+        "NEW123",
+    )
+    updated = _sensor_update_item(
+        "updates.sensors[0]",
+        17,
+        "NEW123",
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(created, updated),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert len(errors) == 1
+
+    error = errors[0]
+
+    assert error.code == PlanErrorCode.CONFLICT
+    assert error.resource_type == "sensor"
+    assert error.source_path == "updates.sensors[0]"
+
+
+## Clean test
+def test_same_sensor_serial_under_different_models_is_consistent():
+    first = _sensor_create_item(
+        "sensors[0]",
+        "NEW123",
+        sensor_model_id=3,
+    )
+    second = _sensor_create_item(
+        "sensors[1]",
+        "NEW123",
+        sensor_model_id=4,
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(first, second),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert errors == ()
+
+
+## Clean test
+def test_sensor_creates_with_same_final_identity_conflict():
+    first = _sensor_create_item(
+        "sensors[0]",
+        "NEW123",
+    )
+    second = _sensor_create_item(
+        "sensors[1]",
+        "NEW123",
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(first, second),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+    assert errors[0].resource_type == "sensor"
+    assert errors[0].source_path == "sensors[1]"
 
 
