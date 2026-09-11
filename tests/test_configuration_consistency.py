@@ -11,6 +11,7 @@ from dendroflow.configuration.plan import (
     ResolvedSensorValues,
 )
 from dendroflow.configuration.resolution.consistency import (
+    ExistingDeploymentState,
     collect_plan_consistency_errors,
 )
 
@@ -410,5 +411,551 @@ def test_sensor_creates_with_same_final_identity_conflict():
     assert errors[0].code == PlanErrorCode.CONFLICT
     assert errors[0].resource_type == "sensor"
     assert errors[0].source_path == "sensors[1]"
+
+
+# Deployment temporal consistency
+
+
+def _deployment_create_item(
+    plan_id: str,
+    *,
+    sensor_id: int = 11,
+    location_id: int = 21,
+    variable_id: int = 31,
+    valid_from: datetime,
+    valid_to: datetime | None,
+) -> ResolvedPlanItem:
+    return ResolvedPlanItem(
+        plan_id=plan_id,
+        resource_type="deployment",
+        action=PlanAction.CREATE,
+        values=ResolvedDeploymentValues(
+            sensor=ExistingRef(
+                resource_type="sensor",
+                database_id=sensor_id,
+            ),
+            location=ExistingRef(
+                resource_type="location",
+                database_id=location_id,
+            ),
+            variable=ExistingRef(
+                resource_type="variable",
+                database_id=variable_id,
+            ),
+            valid_from=valid_from,
+            valid_to=valid_to,
+        ),
+        source_path=plan_id,
+    )
+
+
+## Failing initially - clean after update
+def test_overlapping_deployment_creates_conflict():
+    first = _deployment_create_item(
+        "deployments[0]",
+        valid_from=datetime(
+            2025, 1, 1, tzinfo=timezone.utc
+        ),
+        valid_to=datetime(
+            2025, 3, 1, tzinfo=timezone.utc
+        ),
+    )
+    second = _deployment_create_item(
+        "deployments[1]",
+        location_id=22,
+        valid_from=datetime(
+            2025, 2, 1, tzinfo=timezone.utc
+        ),
+        valid_to=datetime(
+            2025, 4, 1, tzinfo=timezone.utc
+        ),
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(first, second),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+    assert errors[0].resource_type == "deployment"
+    assert errors[0].source_path == "deployments[1]"
+
+
+## Clean test
+def test_adjacent_deployment_creates_are_consistent():
+    first = _deployment_create_item(
+        "deployments[0]",
+        valid_from=datetime(
+            2025, 1, 1, tzinfo=timezone.utc
+        ),
+        valid_to=datetime(
+            2025, 3, 1, tzinfo=timezone.utc
+        ),
+    )
+    second = _deployment_create_item(
+        "deployments[1]",
+        location_id=22,
+        valid_from=datetime(
+            2025, 3, 1, tzinfo=timezone.utc
+        ),
+        valid_to=datetime(
+            2025, 4, 1, tzinfo=timezone.utc
+        ),
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(first, second),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert errors == ()
+
+
+## Clean test
+def test_overlapping_deployments_for_different_variables_are_consistent():
+    first = _deployment_create_item(
+        "deployments[0]",
+        variable_id=31,
+        valid_from=datetime(
+            2025, 1, 1, tzinfo=timezone.utc
+        ),
+        valid_to=datetime(
+            2025, 3, 1, tzinfo=timezone.utc
+        ),
+    )
+    second = _deployment_create_item(
+        "deployments[1]",
+        variable_id=32,
+        valid_from=datetime(
+            2025, 2, 1, tzinfo=timezone.utc
+        ),
+        valid_to=datetime(
+            2025, 4, 1, tzinfo=timezone.utc
+        ),
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(first, second),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert errors == ()
+
+
+## Clean test
+def test_open_ended_deployment_create_overlaps_later_create():
+    first = _deployment_create_item(
+        "deployments[0]",
+        valid_from=datetime(
+            2025, 1, 1, tzinfo=timezone.utc
+        ),
+        valid_to=None,
+    )
+    second = _deployment_create_item(
+        "deployments[1]",
+        location_id=22,
+        valid_from=datetime(
+            2025, 6, 1, tzinfo=timezone.utc
+        ),
+        valid_to=datetime(
+            2025, 7, 1, tzinfo=timezone.utc
+        ),
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(first, second),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+    assert errors[0].resource_type == "deployment"
+    assert errors[0].source_path == "deployments[1]"
+
+
+def _deployment_update_item(
+    plan_id: str,
+    database_id: int,
+    *,
+    sensor_id: int = 11,
+    location_id: int = 21,
+    variable_id: int = 31,
+    valid_from: datetime,
+    valid_to: datetime | None,
+) -> ResolvedPlanItem:
+    return ResolvedPlanItem(
+        plan_id=plan_id,
+        resource_type="deployment",
+        action=PlanAction.UPDATE,
+        database_id=database_id,
+        values=ResolvedDeploymentValues(
+            sensor=ExistingRef(
+                resource_type="sensor",
+                database_id=sensor_id,
+            ),
+            location=ExistingRef(
+                resource_type="location",
+                database_id=location_id,
+            ),
+            variable=ExistingRef(
+                resource_type="variable",
+                database_id=variable_id,
+            ),
+            valid_from=valid_from,
+            valid_to=valid_to,
+        ),
+        changes=(
+            FieldChange(
+                field="valid_from",
+                before=datetime(
+                    2025, 1, 1, tzinfo=timezone.utc
+                ),
+                after=valid_from,
+                identity_change=True,
+            ),
+        ),
+        source_path=plan_id,
+    )
+
+
+## Failing initially - clean after update
+def test_deployment_create_and_update_overlap_conflict():
+    created = _deployment_create_item(
+        "deployments[0]",
+        location_id=22,
+        valid_from=datetime(
+            2025, 3, 1, tzinfo=timezone.utc
+        ),
+        valid_to=datetime(
+            2025, 5, 1, tzinfo=timezone.utc
+        ),
+    )
+
+    updated = _deployment_update_item(
+        "updates.deployments[0]",
+        41,
+        valid_from=datetime(
+            2025, 2, 1, tzinfo=timezone.utc
+        ),
+        valid_to=datetime(
+            2025, 4, 1, tzinfo=timezone.utc
+        ),
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(created, updated),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+    assert errors[0].resource_type == "deployment"
+    assert errors[0].source_path == (
+        "updates.deployments[0]"
+    )
+
+
+## Clean test
+def test_deployment_create_and_update_adjacent_are_consistent():
+    created = _deployment_create_item(
+        "deployments[0]",
+        valid_from=datetime(
+            2025, 1, 1, tzinfo=timezone.utc
+        ),
+        valid_to=datetime(
+            2025, 3, 1, tzinfo=timezone.utc
+        ),
+    )
+
+    updated = _deployment_update_item(
+        "updates.deployments[0]",
+        41,
+        location_id=22,
+        valid_from=datetime(
+            2025, 3, 1, tzinfo=timezone.utc
+        ),
+        valid_to=datetime(
+            2025, 5, 1, tzinfo=timezone.utc
+        ),
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(created, updated),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert errors == ()
+
+
+## Clean test
+def test_deployment_updates_with_overlapping_final_intervals_conflict():
+    first = _deployment_update_item(
+        "updates.deployments[0]",
+        41,
+        valid_from=datetime(
+            2025, 1, 1, tzinfo=timezone.utc
+        ),
+        valid_to=datetime(
+            2025, 3, 1, tzinfo=timezone.utc
+        ),
+    )
+
+    second = _deployment_update_item(
+        "updates.deployments[1]",
+        42,
+        location_id=22,
+        valid_from=datetime(
+            2025, 2, 1, tzinfo=timezone.utc
+        ),
+        valid_to=datetime(
+            2025, 4, 1, tzinfo=timezone.utc
+        ),
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(first, second),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+    assert errors[0].resource_type == "deployment"
+    assert errors[0].source_path == (
+        "updates.deployments[1]"
+    )
+
+
+## Clean test
+def test_deployment_updates_with_adjacent_final_intervals_are_consistent():
+    first = _deployment_update_item(
+        "updates.deployments[0]",
+        41,
+        valid_from=datetime(
+            2025, 1, 1, tzinfo=timezone.utc
+        ),
+        valid_to=datetime(
+            2025, 3, 1, tzinfo=timezone.utc
+        ),
+    )
+
+    second = _deployment_update_item(
+        "updates.deployments[1]",
+        42,
+        location_id=22,
+        valid_from=datetime(
+            2025, 3, 1, tzinfo=timezone.utc
+        ),
+        valid_to=datetime(
+            2025, 4, 1, tzinfo=timezone.utc
+        ),
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(first, second),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert errors == ()
+
+
+## Failing initially - clean after update
+def test_deployment_create_overlapping_existing_history_conflicts():
+    created = _deployment_create_item(
+        "deployments[0]",
+        location_id=22,
+        valid_from=datetime(
+            2025, 3, 1, tzinfo=timezone.utc
+        ),
+        valid_to=datetime(
+            2025, 5, 1, tzinfo=timezone.utc
+        ),
+    )
+
+    existing = ExistingDeploymentState(
+        deployment_id=41,
+        sensor_id=11,
+        variable_id=31,
+        valid_from=datetime(
+            2025, 1, 1, tzinfo=timezone.utc
+        ),
+        valid_to=datetime(
+            2025, 4, 1, tzinfo=timezone.utc
+        ),
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(created,),
+    )
+
+    errors = collect_plan_consistency_errors(
+        plan,
+        existing_deployments=(existing,),
+    )
+
+    assert len(errors) == 1
+
+    error = errors[0]
+
+    assert error.code == PlanErrorCode.CONFLICT
+    assert error.resource_type == "deployment"
+    assert error.source_path == "deployments[0]"
+
+
+## Clean test
+def test_deployment_create_adjacent_to_existing_history_is_consistent():
+    created = _deployment_create_item(
+        "deployments[0]",
+        location_id=22,
+        valid_from=datetime(
+            2025, 4, 1, tzinfo=timezone.utc
+        ),
+        valid_to=datetime(
+            2025, 5, 1, tzinfo=timezone.utc
+        ),
+    )
+
+    existing = ExistingDeploymentState(
+        deployment_id=41,
+        sensor_id=11,
+        variable_id=31,
+        valid_from=datetime(
+            2025, 1, 1, tzinfo=timezone.utc
+        ),
+        valid_to=datetime(
+            2025, 4, 1, tzinfo=timezone.utc
+        ),
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(created,),
+    )
+
+    errors = collect_plan_consistency_errors(
+        plan,
+        existing_deployments=(existing,),
+    )
+
+    assert errors == ()
+
+
+def test_deployment_update_overlapping_other_existing_history_conflicts():
+    updated = _deployment_update_item(
+        "updates.deployments[0]",
+        41,
+        valid_from=datetime(
+            2025, 3, 1, tzinfo=timezone.utc
+        ),
+        valid_to=datetime(
+            2025, 5, 1, tzinfo=timezone.utc
+        ),
+    )
+
+    existing = ExistingDeploymentState(
+        deployment_id=42,
+        sensor_id=11,
+        variable_id=31,
+        valid_from=datetime(
+            2025, 1, 1, tzinfo=timezone.utc
+        ),
+        valid_to=datetime(
+            2025, 4, 1, tzinfo=timezone.utc
+        ),
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(updated,),
+    )
+
+    errors = collect_plan_consistency_errors(
+        plan,
+        existing_deployments=(existing,),
+    )
+
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+    assert errors[0].resource_type == "deployment"
+    assert errors[0].source_path == (
+        "updates.deployments[0]"
+    )
+
+
+def test_deployment_update_ignores_own_existing_history():
+    updated = _deployment_update_item(
+        "updates.deployments[0]",
+        41,
+        valid_from=datetime(
+            2025, 3, 1, tzinfo=timezone.utc
+        ),
+        valid_to=datetime(
+            2025, 5, 1, tzinfo=timezone.utc
+        ),
+    )
+
+    existing = ExistingDeploymentState(
+        deployment_id=41,
+        sensor_id=11,
+        variable_id=31,
+        valid_from=datetime(
+            2025, 1, 1, tzinfo=timezone.utc
+        ),
+        valid_to=datetime(
+            2025, 4, 1, tzinfo=timezone.utc
+        ),
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(updated,),
+    )
+
+    errors = collect_plan_consistency_errors(
+        plan,
+        existing_deployments=(existing,),
+    )
+
+    assert errors == ()
+
+
+def test_deployment_history_with_different_variable_is_consistent():
+    created = _deployment_create_item(
+        "deployments[0]",
+        valid_from=datetime(
+            2025, 3, 1, tzinfo=timezone.utc
+        ),
+        valid_to=datetime(
+            2025, 5, 1, tzinfo=timezone.utc
+        ),
+    )
+
+    existing = ExistingDeploymentState(
+        deployment_id=41,
+        sensor_id=11,
+        variable_id=32,
+        valid_from=datetime(
+            2025, 1, 1, tzinfo=timezone.utc
+        ),
+        valid_to=datetime(
+            2025, 4, 1, tzinfo=timezone.utc
+        ),
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(created,),
+    )
+
+    errors = collect_plan_consistency_errors(
+        plan,
+        existing_deployments=(existing,),
+    )
+
+    assert errors == ()
 
 
