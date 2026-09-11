@@ -705,3 +705,154 @@ def test_deployment_update_retains_multiple_changes(
         False,
     ]
 
+
+# Additional tests
+
+
+def test_sensor_description_update_does_not_require_confirmation(
+    monkeypatch,
+):
+    config = _sensor_update_config(
+        {
+            "description": "New description",
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_sensors",
+        lambda **kwargs: (_sensor_row(),),
+    )
+
+    items, errors = resolve_sensor_updates(config)
+
+    assert errors == ()
+    assert len(items) == 1
+    assert items[0].requires_confirmation is False
+
+
+def test_sensor_serial_number_update_requires_confirmation(
+    monkeypatch,
+):
+    config = _sensor_update_config(
+        {
+            "serial_number": "NEW123",
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_sensors",
+        lambda **kwargs: (_sensor_row(),),
+    )
+
+    items, errors = resolve_sensor_updates(config)
+
+    assert errors == ()
+    assert len(items) == 1
+    assert items[0].requires_confirmation is True
+
+
+def test_deployment_valid_to_update_does_not_require_confirmation(
+    monkeypatch,
+):
+    new_valid_to = datetime(
+        2025,
+        5,
+        1,
+        tzinfo=timezone.utc,
+    )
+
+    config = _deployment_update_config(
+        {
+            "valid_to": new_valid_to,
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_deployments",
+        lambda **kwargs: (_deployment_row(),),
+    )
+
+    items, errors = resolve_deployment_updates(config)
+
+    assert errors == ()
+    assert len(items) == 1
+    assert items[0].requires_confirmation is False
+
+
+def test_deployment_identity_update_requires_confirmation(
+    monkeypatch,
+):
+    new_valid_from = datetime(
+        2025,
+        4,
+        2,
+        tzinfo=timezone.utc,
+    )
+
+    config = _deployment_update_config(
+        {
+            "valid_from": new_valid_from,
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_deployments",
+        lambda **kwargs: (_deployment_row(),),
+    )
+
+    items, errors = resolve_deployment_updates(config)
+
+    assert errors == ()
+    assert len(items) == 1
+    assert items[0].requires_confirmation is True
+
+
+def test_mixed_deployment_update_requires_confirmation(
+    monkeypatch,
+):
+    new_valid_from = datetime(
+        2025,
+        4,
+        2,
+        tzinfo=timezone.utc,
+    )
+    new_valid_to = datetime(
+        2025,
+        5,
+        1,
+        tzinfo=timezone.utc,
+    )
+
+    config = _deployment_update_config(
+        {
+            "valid_from": new_valid_from,
+            "valid_to": new_valid_to,
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_deployments",
+        lambda **kwargs: (_deployment_row(),),
+    )
+
+    items, errors = resolve_deployment_updates(config)
+
+    assert errors == ()
+    assert len(items) == 1
+
+    item = items[0]
+
+    assert [
+        change.identity_change
+        for change in item.changes
+    ] == [
+        True,
+        False,
+    ]
+    assert item.requires_confirmation is True
+
