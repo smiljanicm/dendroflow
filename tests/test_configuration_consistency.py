@@ -5,7 +5,10 @@ from dendroflow.configuration.plan import (
     FieldChange,
     PlanAction,
     PlanErrorCode,
+    PlannedRef,
     ResolvedDeploymentValues,
+    ResolvedFileValues,
+    ResolvedInterfaceValues,
     ResolvedPlan,
     ResolvedPlanItem,
     ResolvedSensorValues,
@@ -50,9 +53,6 @@ def test_clean_plan_has_no_consistency_errors():
     assert errors == ()
 
 
-# Red - green tests
-
-
 def _sensor_update_item(
     plan_id: str,
     database_id: int,
@@ -83,7 +83,6 @@ def _sensor_update_item(
     )
 
 
-## Failing initially - clean after update
 def test_duplicate_sensor_update_target_conflicts():
     first = _sensor_update_item(
         "updates.sensors[0]",
@@ -110,7 +109,6 @@ def test_duplicate_sensor_update_target_conflicts():
     assert error.resource_type == "sensor"
 
 
-## Clean test
 def test_different_sensor_update_targets_are_consistent():
     first = _sensor_update_item(
         "updates.sensors[0]",
@@ -132,7 +130,6 @@ def test_different_sensor_update_targets_are_consistent():
     assert errors == ()
 
 
-## Clean test
 def test_reuse_and_update_same_sensor_are_consistent():
     reuse = ResolvedPlanItem(
         plan_id="sensors[0]",
@@ -165,7 +162,6 @@ def test_reuse_and_update_same_sensor_are_consistent():
     assert errors == ()
 
 
-## Clean test
 def test_duplicate_deployment_update_target_conflicts():
     first = ResolvedPlanItem(
         plan_id="updates.deployments[0]",
@@ -291,7 +287,6 @@ def _sensor_create_item(
     )
 
 
-## Failing initially - clean after update
 def test_sensor_updates_with_same_final_identity_conflict():
     first = _sensor_update_item(
         "updates.sensors[0]",
@@ -319,7 +314,6 @@ def test_sensor_updates_with_same_final_identity_conflict():
     assert error.source_path == "updates.sensors[1]"
 
 
-## Clean test
 def test_sensor_updates_with_different_final_identities_are_consistent():
     first = _sensor_update_item(
         "updates.sensors[0]",
@@ -341,7 +335,6 @@ def test_sensor_updates_with_different_final_identities_are_consistent():
     assert errors == ()
 
 
-## Failing initially - clean after update
 def test_sensor_create_and_update_with_same_final_identity_conflict():
     created = _sensor_create_item(
         "sensors[0]",
@@ -368,7 +361,6 @@ def test_sensor_create_and_update_with_same_final_identity_conflict():
     assert error.source_path == "updates.sensors[0]"
 
 
-## Clean test
 def test_same_sensor_serial_under_different_models_is_consistent():
     first = _sensor_create_item(
         "sensors[0]",
@@ -390,7 +382,6 @@ def test_same_sensor_serial_under_different_models_is_consistent():
     assert errors == ()
 
 
-## Clean test
 def test_sensor_creates_with_same_final_identity_conflict():
     first = _sensor_create_item(
         "sensors[0]",
@@ -411,9 +402,6 @@ def test_sensor_creates_with_same_final_identity_conflict():
     assert errors[0].code == PlanErrorCode.CONFLICT
     assert errors[0].resource_type == "sensor"
     assert errors[0].source_path == "sensors[1]"
-
-
-# Deployment temporal consistency
 
 
 def _deployment_create_item(
@@ -449,7 +437,6 @@ def _deployment_create_item(
     )
 
 
-## Failing initially - clean after update
 def test_overlapping_deployment_creates_conflict():
     first = _deployment_create_item(
         "deployments[0]",
@@ -483,7 +470,6 @@ def test_overlapping_deployment_creates_conflict():
     assert errors[0].source_path == "deployments[1]"
 
 
-## Clean test
 def test_adjacent_deployment_creates_are_consistent():
     first = _deployment_create_item(
         "deployments[0]",
@@ -514,7 +500,6 @@ def test_adjacent_deployment_creates_are_consistent():
     assert errors == ()
 
 
-## Clean test
 def test_overlapping_deployments_for_different_variables_are_consistent():
     first = _deployment_create_item(
         "deployments[0]",
@@ -546,7 +531,6 @@ def test_overlapping_deployments_for_different_variables_are_consistent():
     assert errors == ()
 
 
-## Clean test
 def test_open_ended_deployment_create_overlaps_later_create():
     first = _deployment_create_item(
         "deployments[0]",
@@ -623,7 +607,6 @@ def _deployment_update_item(
     )
 
 
-## Failing initially - clean after update
 def test_deployment_create_and_update_overlap_conflict():
     created = _deployment_create_item(
         "deployments[0]",
@@ -661,7 +644,6 @@ def test_deployment_create_and_update_overlap_conflict():
     )
 
 
-## Clean test
 def test_deployment_create_and_update_adjacent_are_consistent():
     created = _deployment_create_item(
         "deployments[0]",
@@ -694,7 +676,6 @@ def test_deployment_create_and_update_adjacent_are_consistent():
     assert errors == ()
 
 
-## Clean test
 def test_deployment_updates_with_overlapping_final_intervals_conflict():
     first = _deployment_update_item(
         "updates.deployments[0]",
@@ -733,7 +714,6 @@ def test_deployment_updates_with_overlapping_final_intervals_conflict():
     )
 
 
-## Clean test
 def test_deployment_updates_with_adjacent_final_intervals_are_consistent():
     first = _deployment_update_item(
         "updates.deployments[0]",
@@ -767,7 +747,6 @@ def test_deployment_updates_with_adjacent_final_intervals_are_consistent():
     assert errors == ()
 
 
-## Failing initially - clean after update
 def test_deployment_create_overlapping_existing_history_conflicts():
     created = _deployment_create_item(
         "deployments[0]",
@@ -810,7 +789,6 @@ def test_deployment_create_overlapping_existing_history_conflicts():
     assert error.source_path == "deployments[0]"
 
 
-## Clean test
 def test_deployment_create_adjacent_to_existing_history_is_consistent():
     created = _deployment_create_item(
         "deployments[0]",
@@ -957,5 +935,379 @@ def test_deployment_history_with_different_variable_is_consistent():
     )
 
     assert errors == ()
+
+
+def test_deployment_planned_sensor_reference_is_consistent():
+    sensor = _sensor_create_item(
+        "sensors[0]",
+        "NEW123",
+    )
+
+    deployment = ResolvedPlanItem(
+        plan_id="deployments[0]",
+        resource_type="deployment",
+        action=PlanAction.CREATE,
+        values=ResolvedDeploymentValues(
+            sensor=PlannedRef(
+                resource_type="sensor",
+                plan_id="sensors[0]",
+            ),
+            location=ExistingRef(
+                resource_type="location",
+                database_id=21,
+            ),
+            variable=ExistingRef(
+                resource_type="variable",
+                database_id=31,
+            ),
+            valid_from=datetime(
+                2025, 1, 1, tzinfo=timezone.utc
+            ),
+            valid_to=None,
+        ),
+        source_path="deployments[0]",
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(
+            sensor,
+            deployment,
+        ),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert errors == ()
+
+
+def test_dangling_deployment_planned_sensor_reference_conflicts():
+    deployment = ResolvedPlanItem(
+        plan_id="deployments[0]",
+        resource_type="deployment",
+        action=PlanAction.CREATE,
+        values=ResolvedDeploymentValues(
+            sensor=PlannedRef(
+                resource_type="sensor",
+                plan_id="sensors[99]",
+            ),
+            location=ExistingRef(
+                resource_type="location",
+                database_id=21,
+            ),
+            variable=ExistingRef(
+                resource_type="variable",
+                database_id=31,
+            ),
+            valid_from=datetime(
+                2025, 1, 1, tzinfo=timezone.utc
+            ),
+            valid_to=None,
+        ),
+        source_path="deployments[0]",
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(deployment,),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert len(errors) == 1
+
+    error = errors[0]
+
+    assert error.code == PlanErrorCode.CONFLICT
+    assert error.resource_type == "deployment"
+    assert error.source_path == "deployments[0]"
+
+
+def test_planned_reference_with_wrong_resource_type_conflicts():
+    location = ResolvedPlanItem(
+        plan_id="locations[0]",
+        resource_type="location",
+        action=PlanAction.CREATE,
+        values=...,
+        source_path="locations[0]",
+    )
+
+    deployment = ResolvedPlanItem(
+        plan_id="deployments[0]",
+        resource_type="deployment",
+        action=PlanAction.CREATE,
+        values=ResolvedDeploymentValues(
+            sensor=PlannedRef(
+                resource_type="sensor",
+                plan_id="locations[0]",
+            ),
+            location=ExistingRef(
+                resource_type="location",
+                database_id=21,
+            ),
+            variable=ExistingRef(
+                resource_type="variable",
+                database_id=31,
+            ),
+            valid_from=datetime(
+                2025, 1, 1, tzinfo=timezone.utc
+            ),
+            valid_to=None,
+        ),
+        source_path="deployments[0]",
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(
+            location,
+            deployment,
+        ),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+    assert errors[0].resource_type == "deployment"
+    assert errors[0].source_path == "deployments[0]"
+
+
+def test_interface_planned_file_reference_is_consistent():
+    file_item = ResolvedPlanItem(
+        plan_id="files[0]",
+        resource_type="file",
+        action=PlanAction.CREATE,
+        values=ResolvedFileValues(
+            filepath="tests/data/example.csv",
+            timestamp_timezone="Etc/GMT-1",
+            timestamp_format="%Y-%m-%d %H:%M:%S",
+            reader_config={
+                "reader": "csv",
+                "options": {},
+            },
+        ),
+        source_path="files[0]",
+    )
+
+    interface = ResolvedPlanItem(
+        plan_id="files[0].interfaces[0]",
+        resource_type="interface",
+        action=PlanAction.CREATE,
+        values=ResolvedInterfaceValues(
+            file=PlannedRef(
+                resource_type="file",
+                plan_id="files[0]",
+            ),
+            deployment=ExistingRef(
+                resource_type="deployment",
+                database_id=41,
+            ),
+            values_column="value",
+            timestamp_column="timestamp",
+            unit="cm",
+        ),
+        source_path="files[0].interfaces[0]",
+    )
+
+    plan = ResolvedPlan(
+        raw_items=(
+            file_item,
+            interface,
+        ),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert errors == ()
+
+
+def test_dangling_interface_planned_file_reference_conflicts():
+    interface = ResolvedPlanItem(
+        plan_id="files[0].interfaces[0]",
+        resource_type="interface",
+        action=PlanAction.CREATE,
+        values=ResolvedInterfaceValues(
+            file=PlannedRef(
+                resource_type="file",
+                plan_id="files[99]",
+            ),
+            deployment=ExistingRef(
+                resource_type="deployment",
+                database_id=41,
+            ),
+            values_column="value",
+            timestamp_column="timestamp",
+            unit="cm",
+        ),
+        source_path="files[0].interfaces[0]",
+    )
+
+    plan = ResolvedPlan(
+        raw_items=(interface,),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert len(errors) == 1
+
+    error = errors[0]
+
+    assert error.code == PlanErrorCode.CONFLICT
+    assert error.resource_type == "interface"
+    assert error.source_path == "files[0].interfaces[0]"
+
+
+def test_interface_planned_deployment_reference_is_consistent():
+    deployment = _deployment_create_item(
+        "deployments[0]",
+        valid_from=datetime(
+            2025, 1, 1, tzinfo=timezone.utc
+        ),
+        valid_to=None,
+    )
+
+    file_item = ResolvedPlanItem(
+        plan_id="files[0]",
+        resource_type="file",
+        action=PlanAction.CREATE,
+        values=ResolvedFileValues(
+            filepath="tests/data/example.csv",
+            timestamp_timezone="Etc/GMT-1",
+            timestamp_format="%Y-%m-%d %H:%M:%S",
+            reader_config={
+                "reader": "csv",
+                "options": {},
+            },
+        ),
+        source_path="files[0]",
+    )
+
+    interface = ResolvedPlanItem(
+        plan_id="files[0].interfaces[0]",
+        resource_type="interface",
+        action=PlanAction.CREATE,
+        values=ResolvedInterfaceValues(
+            file=PlannedRef(
+                resource_type="file",
+                plan_id="files[0]",
+            ),
+            deployment=PlannedRef(
+                resource_type="deployment",
+                plan_id="deployments[0]",
+            ),
+            values_column="value",
+            timestamp_column="timestamp",
+            unit="cm",
+        ),
+        source_path="files[0].interfaces[0]",
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(deployment,),
+        raw_items=(
+            file_item,
+            interface,
+        ),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert errors == ()
+
+
+def test_dangling_interface_planned_deployment_reference_conflicts():
+    file_item = ResolvedPlanItem(
+        plan_id="files[0]",
+        resource_type="file",
+        action=PlanAction.CREATE,
+        values=ResolvedFileValues(
+            filepath="tests/data/example.csv",
+            timestamp_timezone="Etc/GMT-1",
+            timestamp_format="%Y-%m-%d %H:%M:%S",
+            reader_config={
+                "reader": "csv",
+                "options": {},
+            },
+        ),
+        source_path="files[0]",
+    )
+
+    interface = ResolvedPlanItem(
+        plan_id="files[0].interfaces[0]",
+        resource_type="interface",
+        action=PlanAction.CREATE,
+        values=ResolvedInterfaceValues(
+            file=PlannedRef(
+                resource_type="file",
+                plan_id="files[0]",
+            ),
+            deployment=PlannedRef(
+                resource_type="deployment",
+                plan_id="deployments[99]",
+            ),
+            values_column="value",
+            timestamp_column="timestamp",
+            unit="cm",
+        ),
+        source_path="files[0].interfaces[0]",
+    )
+
+    plan = ResolvedPlan(
+        raw_items=(
+            file_item,
+            interface,
+        ),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+    assert errors[0].resource_type == "interface"
+    assert errors[0].source_path == (
+        "files[0].interfaces[0]"
+    )
+
+
+def test_interface_planned_reference_with_wrong_resource_type_conflicts():
+    deployment = _deployment_create_item(
+        "deployments[0]",
+        valid_from=datetime(
+            2025, 1, 1, tzinfo=timezone.utc
+        ),
+        valid_to=None,
+    )
+
+    interface = ResolvedPlanItem(
+        plan_id="files[0].interfaces[0]",
+        resource_type="interface",
+        action=PlanAction.CREATE,
+        values=ResolvedInterfaceValues(
+            file=PlannedRef(
+                resource_type="file",
+                plan_id="deployments[0]",
+            ),
+            deployment=ExistingRef(
+                resource_type="deployment",
+                database_id=41,
+            ),
+            values_column="value",
+            timestamp_column="timestamp",
+            unit="cm",
+        ),
+        source_path="files[0].interfaces[0]",
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(deployment,),
+        raw_items=(interface,),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+    assert errors[0].resource_type == "interface"
+    assert errors[0].source_path == (
+        "files[0].interfaces[0]"
+    )
 
 

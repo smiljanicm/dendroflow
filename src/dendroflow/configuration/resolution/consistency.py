@@ -6,7 +6,9 @@ from ..plan import (
     PlanAction,
     PlanError,
     PlanErrorCode,
+    PlannedRef,
     ResolvedDeploymentValues,
+    ResolvedInterfaceValues,
     ResolvedPlan,
     ResolvedPlanItem,
     ResolvedSensorValues,
@@ -304,6 +306,70 @@ def _collect_existing_deployment_overlap_errors(
     return errors
 
 
+def _collect_planned_ref_errors(
+    plan: ResolvedPlan,
+) -> list[PlanError]:
+    errors: list[PlanError] = []
+
+    planned_creates = {
+        (item.resource_type, item.plan_id)
+        for item in plan.items
+        if item.action == PlanAction.CREATE
+    }
+
+    for item in plan.items:
+        references: tuple[object, ...]
+
+        if isinstance(
+            item.values,
+            ResolvedDeploymentValues,
+        ):
+            references = (
+                item.values.sensor,
+                item.values.location,
+                item.values.variable,
+            )
+
+        elif isinstance(
+            item.values,
+            ResolvedInterfaceValues,
+        ):
+            references = (
+                item.values.file,
+                item.values.deployment,
+            )
+
+        else:
+            continue
+
+        for reference in references:
+            if not isinstance(reference, PlannedRef):
+                continue
+
+            target = (
+                reference.resource_type,
+                reference.plan_id,
+            )
+
+            if target in planned_creates:
+                continue
+
+            errors.append(
+                PlanError(
+                    code=PlanErrorCode.CONFLICT,
+                    resource_type=item.resource_type,
+                    source_path=item.source_path,
+                    message=(
+                        "planned reference does not "
+                        "resolve to a matching CREATE item"
+                    ),
+                )
+            )
+            break
+
+    return errors
+
+
 def collect_plan_consistency_errors(
     plan: ResolvedPlan,
     *,
@@ -329,6 +395,9 @@ def collect_plan_consistency_errors(
             plan,
             existing_deployments,
         )
+    )
+    errors.extend(
+        _collect_planned_ref_errors(plan)
     )
 
     return tuple(errors)
