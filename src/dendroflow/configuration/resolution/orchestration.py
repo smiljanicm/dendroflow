@@ -236,3 +236,43 @@ def resolve_update_config(
         warnings=(),
     )
 
+
+def resolve_config(
+    config: ConfigModel,
+) -> ResolvedPlan:
+    validate_config(config)
+
+    metadata_plan = resolve_metadata_config(config)
+
+    update_plan = resolve_update_config(
+        config,
+        existing_bindings=metadata_plan.bindings,
+    )
+
+    raw_plan = resolve_raw_config(
+        config,
+        existing_bindings=metadata_plan.bindings,
+    )
+
+    return ResolvedPlan(
+        metadata_items=(
+            metadata_plan.metadata_items
+            + update_plan.metadata_items
+        ),
+        raw_items=raw_plan.raw_items,
+        bindings=(
+            metadata_plan.bindings
+            + raw_plan.bindings
+        ),
+        errors=(
+            metadata_plan.errors
+            + update_plan.errors
+            + raw_plan.errors
+        ),
+        warnings=(
+            metadata_plan.warnings
+            + update_plan.warnings
+            + raw_plan.warnings
+        ),
+    )
+
