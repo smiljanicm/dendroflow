@@ -1,3 +1,7 @@
+from datetime import datetime, timezone
+
+from dendroflow.configuration import metadata, raw
+from dendroflow.configuration.metadata import MetadataRow
 from dendroflow.configuration.models import ConfigModel
 from dendroflow.configuration.plan import (
     ExistingRef,
@@ -7,7 +11,7 @@ from dendroflow.configuration.plan import (
     PlanError,
     PlanErrorCode,
     PlannedRef,
-     PlanWarning,
+    PlanWarning,
     ResolvedFileValues,
     ResolvedInterfaceValues,
     ResolvedPlan,
@@ -524,4 +528,359 @@ def test_resolve_config_with_error_cannot_apply(
 
     assert plan.errors == (error,)
     assert plan.can_apply is False
+
+
+# Hardening tests
+
+
+def _existing_deployment_row() -> MetadataRow:
+    return MetadataRow(
+        database_id=41,
+        values={
+            "sensor_id": 11,
+            "location_id": 21,
+            "variable_id": 31,
+            "valid_from": datetime(
+                2025,
+                4,
+                1,
+                tzinfo=timezone.utc,
+            ),
+            "valid_to": None,
+        },
+    )
+
+
+def test_resolve_config_builds_mixed_full_plan(
+    monkeypatch,
+):
+    config = ConfigModel(
+        sites=[
+            {
+                "ref": "new_site",
+                "site_code": "NEW",
+                "name": "New site",
+            }
+        ],
+        references={
+            "deployments": {
+                "water_level_main": {
+                    "valid_from": (
+                        "2025-04-01T00:00:00Z"
+                    ),
+                }
+            }
+        },
+        updates={
+            "sensors": [
+                {
+                    "update": {
+                        "serial_number": "OLD123",
+                    },
+                    "set": {
+                        "serial_number": "NEW123",
+                    },
+                }
+            ]
+        },
+        files=[
+            {
+                "ref": "water_table_file",
+                "path": "tests/data/example.dat",
+                "timestamp": {
+                    "timezone": "UTC",
+                    "format": "%Y-%m-%d %H:%M:%S",
+                },
+                "reader": {
+                    "type": "csv",
+                    "options": {},
+                },
+                "interfaces": [
+                    {
+                        "deployment": "water_level_main",
+                        "timestamp_column": "TIMESTAMP",
+                        "values_column": "Lvl_cm_Avg",
+                        "unit": "cm",
+                    }
+                ],
+            }
+        ],
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_site",
+        lambda site_code: None,
+    )
+    monkeypatch.setattr(
+        metadata,
+        "find_deployments",
+        lambda **kwargs: (_existing_deployment_row(),),
+    )
+    monkeypatch.setattr(
+        metadata,
+        "find_sensors",
+        lambda **kwargs: (
+            MetadataRow(
+                database_id=17,
+                values={
+                    "sensor_model_id": 3,
+                    "serial_number": "OLD123",
+                    "description": None,
+                },
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        raw,
+        "find_file",
+        lambda filepath: None,
+    )
+
+    plan = resolve_config(config)
+
+    assert plan.errors == ()
+
+    assert [
+        item.plan_id
+        for item in plan.metadata_items
+    ] == [
+        "sites[0]",
+        "updates.sensors[0]",
+    ]
+
+    assert [
+        item.plan_id
+        for item in plan.raw_items
+    ] == [
+        "files[0]",
+        "files[0].interfaces[0]",
+    ]
+
+    assert (
+        plan.raw_items[1].values.deployment
+        == ExistingRef(
+            resource_type="deployment",
+            database_id=41,
+        )
+    )
+
+    assert plan.requires_confirmation is True
+    assert plan.can_apply is True
+
+
+def test_metadata_error_does_not_block_independent_raw_branch(
+    monkeypatch,
+):
+    config = ConfigModel(
+        references={
+            "sites": {
+                "missing_site": {
+                    "site_code": "MISSING",
+                }
+            },
+            "deployments": {
+                "water_level_main": {
+                    "valid_from": (
+                        "2025-04-01T00:00:00Z"
+                    ),
+                }
+            },
+        },
+        files=[
+            {
+                "path": "tests/data/example.dat",
+                "timestamp": {
+                    "timezone": "UTC",
+                    "format": "%Y-%m-%d %H:%M:%S",
+                },
+                "reader": {
+                    "type": "csv",
+                    "options": {},
+                },
+                "interfaces": [
+                    {
+                        "deployment": "water_level_main",
+                        "timestamp_column": "TIMESTAMP",
+                        "values_column": "Lvl_cm_Avg",
+                        "unit": "cm",
+                    }
+                ],
+            }
+        ],
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_site",
+        lambda site_code: None,
+    )
+    monkeypatch.setattr(
+        metadata,
+        "find_deployments",
+        lambda **kwargs: (_existing_deployment_row(),),
+    )
+    monkeypatch.setattr(
+        raw,
+        "find_file",
+        lambda filepath: None,
+    )
+
+    plan = resolve_config(config)
+
+    assert len(plan.errors) == 1
+    assert plan.errors[0].code == PlanErrorCode.NOT_FOUND
+
+    assert [
+        item.plan_id
+        for item in plan.raw_items
+    ] == [
+        "files[0]",
+        "files[0].interfaces[0]",
+    ]
+
+    assert plan.can_apply is False
+
+
+def test_planned_deployment_flows_into_raw_interface(
+    monkeypatch,
+):
+    config = ConfigModel(
+        references={
+            "sensors": {
+                "sensor_main": {
+                    "serial_number": "SENSOR123",
+                }
+            },
+            "locations": {
+                "location_main": {
+                    "initial_label": "Well 1",
+                }
+            },
+            "variables": {
+                "water_level": {
+                    "variable": "water_level",
+                }
+            },
+        },
+        deployments=[
+            {
+                "ref": "water_level_main",
+                "sensor": "sensor_main",
+                "location": "location_main",
+                "variable": "water_level",
+                "valid_from": (
+                    "2025-04-01T00:00:00Z"
+                ),
+            }
+        ],
+        files=[
+            {
+                "path": "tests/data/example.dat",
+                "timestamp": {
+                    "timezone": "UTC",
+                    "format": "%Y-%m-%d %H:%M:%S",
+                },
+                "reader": {
+                    "type": "csv",
+                    "options": {},
+                },
+                "interfaces": [
+                    {
+                        "deployment": "water_level_main",
+                        "timestamp_column": "TIMESTAMP",
+                        "values_column": "Lvl_cm_Avg",
+                        "unit": "cm",
+                    }
+                ],
+            }
+        ],
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_sensors",
+        lambda **kwargs: (
+            MetadataRow(
+                database_id=11,
+                values={
+                    "sensor_model_id": 3,
+                    "serial_number": "SENSOR123",
+                    "description": None,
+                },
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        metadata,
+        "find_locations",
+        lambda **kwargs: (
+            MetadataRow(
+                database_id=21,
+                values={
+                    "site_id": 1,
+                    "location_type_id": 2,
+                    "latitude": None,
+                    "longitude": None,
+                    "height_above_ground": None,
+                    "azimuth": None,
+                    "initial_label": "Well 1",
+                    "initial_label_valid_from": datetime(
+                        2024,
+                        1,
+                        1,
+                        tzinfo=timezone.utc,
+                    ),
+                    "initial_label_valid_to": None,
+                },
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        metadata,
+        "find_variable",
+        lambda variable: MetadataRow(
+            database_id=31,
+            values={
+                "variable": "water_level",
+                "derived": False,
+                "description": None,
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        metadata,
+        "find_deployments",
+        lambda **kwargs: (),
+    )
+    monkeypatch.setattr(
+        raw,
+        "find_file",
+        lambda filepath: None,
+    )
+
+    plan = resolve_config(config)
+
+    assert plan.errors == ()
+
+    deployment_item = next(
+        item
+        for item in plan.metadata_items
+        if item.plan_id == "deployments[0]"
+    )
+
+    assert deployment_item.action == PlanAction.CREATE
+
+    interface_item = next(
+        item
+        for item in plan.raw_items
+        if item.plan_id == "files[0].interfaces[0]"
+    )
+
+    assert interface_item.values.deployment == PlannedRef(
+        resource_type="deployment",
+        plan_id="deployments[0]",
+    )
+
+    assert plan.can_apply is True
 
