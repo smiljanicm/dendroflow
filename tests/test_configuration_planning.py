@@ -699,3 +699,138 @@ updates:
     assert plan.can_apply is False
 
 
+def test_sandhagen_file_config_builds_expected_raw_plan(
+    tmp_path,
+    monkeypatch,
+):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+references:
+  deployments:
+    water_level_main:
+      valid_from: "2025-01-01T00:00:00+00:00"
+
+files:
+  - ref: sandhagen_water_table
+    path: tests/data/Sandhagen_Rewetted_WaterTbl.dat
+    timestamp:
+      timezone: Etc/GMT-1
+      format: "%Y-%m-%d %H:%M:%S"
+    reader:
+      type: csv
+      options:
+        skiprows: [0, 2, 3]
+        delimiter: ","
+        encoding: utf-8
+        na_values: [NAN]
+    interfaces:
+      - deployment: water_level_main
+        timestamp_column: TIMESTAMP
+        values_column: Lvl_cm_Avg
+        unit: cm
+""",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        metadata_db,
+        "find_deployments",
+        lambda **kwargs: (
+            MetadataRow(
+                database_id=41,
+                values={
+                    "sensor_id": 11,
+                    "location_id": 21,
+                    "variable_id": 31,
+                    "valid_from": kwargs["valid_from"],
+                    "valid_to": None,
+                },
+            ),
+        ),
+    )
+
+    monkeypatch.setattr(
+        raw_db,
+        "find_file",
+        lambda filepath: None,
+    )
+
+    config = load_config(config_path)
+    plan = resolve_config(config)
+
+    assert plan.errors == ()
+    assert plan.can_apply is True
+    assert plan.requires_confirmation is False
+
+    assert plan.metadata_items == ()
+
+    assert tuple(
+        item.plan_id
+        for item in plan.raw_items
+    ) == (
+        "files[0]",
+        "files[0].interfaces[0]",
+    )
+
+    file_item = plan.raw_items[0]
+
+    assert file_item.resource_type == "file"
+    assert file_item.action == PlanAction.CREATE
+
+    assert isinstance(
+        file_item.values,
+        ResolvedFileValues,
+    )
+
+    assert file_item.values.filepath == (
+        "tests/data/Sandhagen_Rewetted_WaterTbl.dat"
+    )
+    assert file_item.values.timestamp_timezone == (
+        "Etc/GMT-1"
+    )
+    assert file_item.values.timestamp_format == (
+        "%Y-%m-%d %H:%M:%S"
+    )
+
+    assert file_item.values.reader_config == {
+        "reader": "csv",
+        "options": {
+            "skiprows": [0, 2, 3],
+            "delimiter": ",",
+            "encoding": "utf-8",
+            "na_values": ["NAN"],
+        },
+    }
+
+    interface_item = plan.raw_items[1]
+
+    assert interface_item.resource_type == "interface"
+    assert interface_item.action == PlanAction.CREATE
+
+    assert isinstance(
+        interface_item.values,
+        ResolvedInterfaceValues,
+    )
+
+    assert interface_item.values.file == PlannedRef(
+        resource_type="file",
+        plan_id="files[0]",
+    )
+    assert interface_item.values.deployment == ExistingRef(
+        resource_type="deployment",
+        database_id=41,
+    )
+    assert interface_item.values.timestamp_column == "TIMESTAMP"
+    assert interface_item.values.values_column == "Lvl_cm_Avg"
+    assert interface_item.values.unit == "cm"
+
+    assert tuple(
+        binding.alias
+        for binding in plan.bindings
+    ) == (
+        "water_level_main",
+        "sandhagen_water_table",
+    )
+
+
