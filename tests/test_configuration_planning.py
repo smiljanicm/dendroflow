@@ -834,3 +834,97 @@ files:
     )
 
 
+def test_config_planning_is_deterministic(
+    tmp_path,
+    monkeypatch,
+):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+references:
+  deployments:
+    water_level_main:
+      valid_from: "2025-01-01T00:00:00+00:00"
+
+sites:
+  - ref: new_site
+    site_code: TEST01
+    name: Test Site
+
+files:
+  - ref: water_table_file
+    path: tests/data/example.csv
+    timestamp:
+      timezone: Etc/GMT-1
+      format: "%Y-%m-%d %H:%M:%S"
+    reader:
+      type: csv
+      options:
+        delimiter: ","
+    interfaces:
+      - deployment: water_level_main
+        timestamp_column: TIMESTAMP
+        values_column: Lvl_cm_Avg
+        unit: cm
+""",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        metadata_db,
+        "find_site",
+        lambda site_code: None,
+    )
+
+    monkeypatch.setattr(
+        metadata_db,
+        "find_deployments",
+        lambda **kwargs: (
+            MetadataRow(
+                database_id=41,
+                values={
+                    "sensor_id": 11,
+                    "location_id": 21,
+                    "variable_id": 31,
+                    "valid_from": kwargs["valid_from"],
+                    "valid_to": None,
+                },
+            ),
+        ),
+    )
+
+    monkeypatch.setattr(
+        raw_db,
+        "find_file",
+        lambda filepath: None,
+    )
+
+    config = load_config(config_path)
+
+    first = resolve_config(config)
+    second = resolve_config(config)
+
+    assert first == second
+
+    assert first.can_apply is True
+    assert first.errors == ()
+
+    assert tuple(
+        item.plan_id
+        for item in first.items
+    ) == (
+        "sites[0]",
+        "files[0]",
+        "files[0].interfaces[0]",
+    )
+
+    assert tuple(
+        binding.alias
+        for binding in first.bindings
+    ) == (
+        "new_site",
+        "water_level_main",
+        "water_table_file",
+    )
+
+
