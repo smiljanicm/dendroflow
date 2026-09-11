@@ -4,7 +4,10 @@ from dendroflow.configuration.plan import (
     FieldChange,
     PlanAction,
     PlanBinding,
+    PlanError,
+    PlanErrorCode,
     PlannedRef,
+     PlanWarning,
     ResolvedFileValues,
     ResolvedInterfaceValues,
     ResolvedPlan,
@@ -327,4 +330,198 @@ def test_resolve_config_preserves_plan_order(
         "files[0]",
         "files[0].interfaces[0]",
     ]
+
+
+# Error propagation
+
+
+def test_resolve_config_aggregates_errors_in_subsystem_order(
+    monkeypatch,
+):
+    config = ConfigModel()
+
+    metadata_error = PlanError(
+        code=PlanErrorCode.NOT_FOUND,
+        resource_type="sensor",
+        source_path="sensors[0]",
+        message="metadata error",
+    )
+    update_error = PlanError(
+        code=PlanErrorCode.AMBIGUOUS,
+        resource_type="sensor",
+        source_path="updates.sensors[0].update",
+        message="update error",
+    )
+    raw_error = PlanError(
+        code=PlanErrorCode.INVALID_REFERENCE,
+        resource_type="interface",
+        source_path="files[0].interfaces[0].deployment",
+        message="raw error",
+    )
+
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_metadata_config",
+        lambda config: ResolvedPlan(
+            errors=(metadata_error,),
+        ),
+    )
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_update_config",
+        lambda config, existing_bindings=(): ResolvedPlan(
+            errors=(update_error,),
+        ),
+    )
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_raw_config",
+        lambda config, existing_bindings=(): ResolvedPlan(
+            errors=(raw_error,),
+        ),
+    )
+
+    plan = resolve_config(config)
+
+    assert plan.errors == (
+        metadata_error,
+        update_error,
+        raw_error,
+    )
+
+
+def test_resolve_config_aggregates_warnings_in_subsystem_order(
+    monkeypatch,
+):
+    config = ConfigModel()
+
+    metadata_warning = PlanWarning(
+        code="metadata_warning",
+        source_path="sensors[0]",
+        message="metadata warning",
+    )
+    update_warning = PlanWarning(
+        code="update_warning",
+        source_path="updates.sensors[0]",
+        message="update warning",
+    )
+    raw_warning = PlanWarning(
+        code="raw_warning",
+        source_path="files[0]",
+        message="raw warning",
+    )
+
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_metadata_config",
+        lambda config: ResolvedPlan(
+            warnings=(metadata_warning,),
+        ),
+    )
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_update_config",
+        lambda config, existing_bindings=(): ResolvedPlan(
+            warnings=(update_warning,),
+        ),
+    )
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_raw_config",
+        lambda config, existing_bindings=(): ResolvedPlan(
+            warnings=(raw_warning,),
+        ),
+    )
+
+    plan = resolve_config(config)
+
+    assert plan.warnings == (
+        metadata_warning,
+        update_warning,
+        raw_warning,
+    )
+
+
+def test_resolve_config_keeps_items_when_other_subsystem_has_error(
+    monkeypatch,
+):
+    config = ConfigModel()
+
+    metadata_item = _sensor_item(
+        "sensors[0]",
+        PlanAction.REUSE,
+        17,
+    )
+    raw_item = _file_item()
+
+    update_error = PlanError(
+        code=PlanErrorCode.NOT_FOUND,
+        resource_type="sensor",
+        source_path="updates.sensors[0].update",
+        message="sensor not found",
+    )
+
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_metadata_config",
+        lambda config: ResolvedPlan(
+            metadata_items=(metadata_item,),
+        ),
+    )
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_update_config",
+        lambda config, existing_bindings=(): ResolvedPlan(
+            errors=(update_error,),
+        ),
+    )
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_raw_config",
+        lambda config, existing_bindings=(): ResolvedPlan(
+            raw_items=(raw_item,),
+        ),
+    )
+
+    plan = resolve_config(config)
+
+    assert plan.metadata_items == (metadata_item,)
+    assert plan.raw_items == (raw_item,)
+    assert plan.errors == (update_error,)
+
+
+def test_resolve_config_with_error_cannot_apply(
+    monkeypatch,
+):
+    config = ConfigModel()
+
+    error = PlanError(
+        code=PlanErrorCode.CONFLICT,
+        resource_type="file",
+        source_path="files[0].reader_config",
+        message="file configuration conflict",
+    )
+
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_metadata_config",
+        lambda config: ResolvedPlan(),
+    )
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_update_config",
+        lambda config, existing_bindings=(): ResolvedPlan(),
+    )
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_raw_config",
+        lambda config, existing_bindings=(): ResolvedPlan(
+            errors=(error,),
+        ),
+    )
+
+    plan = resolve_config(config)
+
+    assert plan.errors == (error,)
+    assert plan.can_apply is False
 
