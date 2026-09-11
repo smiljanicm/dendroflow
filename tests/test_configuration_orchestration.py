@@ -12,6 +12,7 @@ from dendroflow.configuration.plan import (
     PlanErrorCode,
     PlannedRef,
     PlanWarning,
+    ResolvedDeploymentValues,
     ResolvedFileValues,
     ResolvedInterfaceValues,
     ResolvedPlan,
@@ -883,4 +884,263 @@ def test_planned_deployment_flows_into_raw_interface(
     )
 
     assert plan.can_apply is True
+
+
+def _sensor_update_item(
+    *,
+    plan_id: str,
+    database_id: int,
+    serial_number: str,
+) -> ResolvedPlanItem:
+    return ResolvedPlanItem(
+        plan_id=plan_id,
+        resource_type="sensor",
+        action=PlanAction.UPDATE,
+        database_id=database_id,
+        values=ResolvedSensorValues(
+            sensor_model=ExistingRef(
+                resource_type="sensor_model",
+                database_id=3,
+            ),
+            serial_number=serial_number,
+            description=None,
+        ),
+        changes=(
+            FieldChange(
+                field="serial_number",
+                before="OLD",
+                after=serial_number,
+                identity_change=True,
+            ),
+        ),
+        source_path=plan_id,
+    )
+
+
+def test_resolve_config_adds_plan_consistency_errors(
+    monkeypatch,
+):
+    first_update = _sensor_update_item(
+        plan_id="updates.sensors[0]",
+        database_id=17,
+        serial_number="NEW_A",
+    )
+    second_update = _sensor_update_item(
+        plan_id="updates.sensors[1]",
+        database_id=17,
+        serial_number="NEW_B",
+    )
+
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_metadata_config",
+        lambda config: ResolvedPlan(),
+    )
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_update_config",
+        lambda config, existing_bindings=(): ResolvedPlan(
+            metadata_items=(
+                first_update,
+                second_update,
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_raw_config",
+        lambda config, existing_bindings=(): ResolvedPlan(),
+    )
+
+    plan = orchestration.resolve_config(
+        ConfigModel()
+    )
+
+    assert len(plan.errors) == 1
+    assert plan.errors[0].code == PlanErrorCode.CONFLICT
+    assert plan.errors[0].source_path == (
+        "updates.sensors[1]"
+    )
+    assert plan.can_apply is False
+
+
+def test_resolve_config_checks_persisted_deployment_history(
+    monkeypatch,
+):
+    deployment = ResolvedPlanItem(
+        plan_id="deployments[0]",
+        resource_type="deployment",
+        action=PlanAction.CREATE,
+        values=ResolvedDeploymentValues(
+            sensor=ExistingRef(
+                resource_type="sensor",
+                database_id=11,
+            ),
+            location=ExistingRef(
+                resource_type="location",
+                database_id=21,
+            ),
+            variable=ExistingRef(
+                resource_type="variable",
+                database_id=31,
+            ),
+            valid_from=datetime(
+                2025, 3, 1, tzinfo=timezone.utc
+            ),
+            valid_to=datetime(
+                2025, 5, 1, tzinfo=timezone.utc
+            ),
+        ),
+        source_path="deployments[0]",
+    )
+
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_metadata_config",
+        lambda config: ResolvedPlan(
+            metadata_items=(deployment,),
+        ),
+    )
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_update_config",
+        lambda config, existing_bindings=(): ResolvedPlan(),
+    )
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_raw_config",
+        lambda config, existing_bindings=(): ResolvedPlan(),
+    )
+
+    monkeypatch.setattr(
+        orchestration,
+        "find_deployments",
+        lambda **kwargs: (
+            MetadataRow(
+                database_id=41,
+                values={
+                    "sensor_id": 11,
+                    "location_id": 22,
+                    "variable_id": 31,
+                    "valid_from": datetime(
+                        2025, 1, 1, tzinfo=timezone.utc
+                    ),
+                    "valid_to": datetime(
+                        2025, 4, 1, tzinfo=timezone.utc
+                    ),
+                },
+            ),
+        ),
+    )
+
+    plan = orchestration.resolve_config(
+        ConfigModel()
+    )
+
+    assert len(plan.errors) == 1
+    assert plan.errors[0].code == PlanErrorCode.CONFLICT
+    assert plan.errors[0].resource_type == "deployment"
+    assert plan.errors[0].source_path == "deployments[0]"
+    assert plan.can_apply is False
+
+
+def test_resolve_config_deduplicates_deployment_history_lookups(
+    monkeypatch,
+):
+    first = ResolvedPlanItem(
+        plan_id="deployments[0]",
+        resource_type="deployment",
+        action=PlanAction.CREATE,
+        values=ResolvedDeploymentValues(
+            sensor=ExistingRef(
+                resource_type="sensor",
+                database_id=11,
+            ),
+            location=ExistingRef(
+                resource_type="location",
+                database_id=21,
+            ),
+            variable=ExistingRef(
+                resource_type="variable",
+                database_id=31,
+            ),
+            valid_from=datetime(
+                2025, 1, 1, tzinfo=timezone.utc
+            ),
+            valid_to=datetime(
+                2025, 3, 1, tzinfo=timezone.utc
+            ),
+        ),
+        source_path="deployments[0]",
+    )
+
+    second = ResolvedPlanItem(
+        plan_id="deployments[1]",
+        resource_type="deployment",
+        action=PlanAction.CREATE,
+        values=ResolvedDeploymentValues(
+            sensor=ExistingRef(
+                resource_type="sensor",
+                database_id=11,
+            ),
+            location=ExistingRef(
+                resource_type="location",
+                database_id=22,
+            ),
+            variable=ExistingRef(
+                resource_type="variable",
+                database_id=31,
+            ),
+            valid_from=datetime(
+                2025, 3, 1, tzinfo=timezone.utc
+            ),
+            valid_to=datetime(
+                2025, 5, 1, tzinfo=timezone.utc
+            ),
+        ),
+        source_path="deployments[1]",
+    )
+
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_metadata_config",
+        lambda config: ResolvedPlan(
+            metadata_items=(first, second),
+        ),
+    )
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_update_config",
+        lambda config, existing_bindings=(): ResolvedPlan(),
+    )
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_raw_config",
+        lambda config, existing_bindings=(): ResolvedPlan(),
+    )
+
+    calls = []
+
+    def fake_find_deployments(**kwargs):
+        calls.append(kwargs)
+        return ()
+
+    monkeypatch.setattr(
+        orchestration,
+        "find_deployments",
+        fake_find_deployments,
+    )
+
+    plan = orchestration.resolve_config(
+        ConfigModel()
+    )
+
+    assert calls == [
+        {
+            "sensor_id": 11,
+            "variable_id": 31,
+        }
+    ]
+    assert plan.errors == ()
+
 

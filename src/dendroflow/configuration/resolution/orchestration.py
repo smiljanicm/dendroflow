@@ -1,7 +1,20 @@
+from ..metadata import find_deployments
 from ..models import ConfigModel
-from ..plan import PlanBinding, PlanError, ResolvedPlan, ResolvedPlanItem
+from ..plan import (
+    ExistingRef,
+    PlanAction,
+    PlanBinding,
+    PlanError,
+    ResolvedDeploymentValues,
+    ResolvedPlan,
+    ResolvedPlanItem,
+)
 from ..validation import validate_config
 from .aliases import build_alias_registry
+from .consistency import (
+    ExistingDeploymentState,
+    collect_plan_consistency_errors,
+)
 from .metadata import (
     resolve_deployment_declarations,
     resolve_deployment_reference_aliases,
@@ -237,6 +250,69 @@ def resolve_update_config(
     )
 
 
+def _load_existing_deployment_states(
+    plan: ResolvedPlan,
+) -> tuple[ExistingDeploymentState, ...]:
+    lookup_keys: set[tuple[int, int]] = set()
+
+    for item in plan.metadata_items:
+        if item.resource_type != "deployment":
+            continue
+
+        if item.action not in {
+            PlanAction.CREATE,
+            PlanAction.UPDATE,
+        }:
+            continue
+
+        assert isinstance(
+            item.values,
+            ResolvedDeploymentValues,
+        )
+
+        sensor = item.values.sensor
+        variable = item.values.variable
+
+        if not isinstance(sensor, ExistingRef):
+            continue
+
+        if not isinstance(variable, ExistingRef):
+            continue
+
+        lookup_keys.add(
+            (
+                sensor.database_id,
+                variable.database_id,
+            )
+        )
+
+    states: dict[int, ExistingDeploymentState] = {}
+
+    for sensor_id, variable_id in sorted(
+        lookup_keys
+    ):
+        rows = find_deployments(
+            sensor_id=sensor_id,
+            variable_id=variable_id,
+        )
+
+        for row in rows:
+            states[row.database_id] = (
+                ExistingDeploymentState(
+                    deployment_id=row.database_id,
+                    sensor_id=row.values["sensor_id"],
+                    variable_id=row.values["variable_id"],
+                    valid_from=row.values["valid_from"],
+                    valid_to=row.values["valid_to"],
+                )
+            )
+
+    return tuple(
+        states[deployment_id]
+        for deployment_id in sorted(states)
+    )
+
+
 def resolve_config(
     config: ConfigModel,
 ) -> ResolvedPlan:
@@ -254,7 +330,7 @@ def resolve_config(
         existing_bindings=metadata_plan.bindings,
     )
 
-    return ResolvedPlan(
+    combined_plan = ResolvedPlan(
         metadata_items=(
             metadata_plan.metadata_items
             + update_plan.metadata_items
@@ -276,3 +352,26 @@ def resolve_config(
         ),
     )
 
+    existing_deployments = (
+        _load_existing_deployment_states(
+            combined_plan
+        )
+    )
+
+    consistency_errors = (
+        collect_plan_consistency_errors(
+            combined_plan,
+            existing_deployments=existing_deployments,
+        )
+    )
+
+    return ResolvedPlan(
+        metadata_items=combined_plan.metadata_items,
+        raw_items=combined_plan.raw_items,
+        bindings=combined_plan.bindings,
+        errors=(
+            combined_plan.errors
+            + consistency_errors
+        ),
+        warnings=combined_plan.warnings,
+    )

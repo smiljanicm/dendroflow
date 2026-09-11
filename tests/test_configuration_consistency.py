@@ -1311,3 +1311,124 @@ def test_interface_planned_reference_with_wrong_resource_type_conflicts():
     )
 
 
+def test_multiple_consistency_errors_accumulate():
+    first_update = _sensor_update_item(
+        "updates.sensors[0]",
+        17,
+        "NEW_A",
+    )
+    second_update = _sensor_update_item(
+        "updates.sensors[1]",
+        17,
+        "NEW_B",
+    )
+
+    interface = ResolvedPlanItem(
+        plan_id="files[0].interfaces[0]",
+        resource_type="interface",
+        action=PlanAction.CREATE,
+        values=ResolvedInterfaceValues(
+            file=PlannedRef(
+                resource_type="file",
+                plan_id="files[99]",
+            ),
+            deployment=ExistingRef(
+                resource_type="deployment",
+                database_id=41,
+            ),
+            values_column="value",
+            timestamp_column="timestamp",
+            unit="cm",
+        ),
+        source_path="files[0].interfaces[0]",
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(
+            first_update,
+            second_update,
+        ),
+        raw_items=(interface,),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert len(errors) == 2
+
+    assert errors[0].code == PlanErrorCode.CONFLICT
+    assert errors[0].source_path == (
+        "updates.sensors[1]"
+    )
+
+    assert errors[1].code == PlanErrorCode.CONFLICT
+    assert errors[1].source_path == (
+        "files[0].interfaces[0]"
+    )
+
+
+def test_consistency_errors_have_deterministic_rule_order():
+    duplicate_first = _sensor_update_item(
+        "updates.sensors[0]",
+        17,
+        "SERIAL_A",
+    )
+    duplicate_second = _sensor_update_item(
+        "updates.sensors[1]",
+        17,
+        "SERIAL_B",
+    )
+
+    identity_first = _sensor_update_item(
+        "updates.sensors[2]",
+        18,
+        "COLLISION",
+    )
+    identity_second = _sensor_update_item(
+        "updates.sensors[3]",
+        19,
+        "COLLISION",
+    )
+
+    interface = ResolvedPlanItem(
+        plan_id="files[0].interfaces[0]",
+        resource_type="interface",
+        action=PlanAction.CREATE,
+        values=ResolvedInterfaceValues(
+            file=PlannedRef(
+                resource_type="file",
+                plan_id="files[99]",
+            ),
+            deployment=ExistingRef(
+                resource_type="deployment",
+                database_id=41,
+            ),
+            values_column="value",
+            timestamp_column="timestamp",
+            unit="cm",
+        ),
+        source_path="files[0].interfaces[0]",
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(
+            duplicate_first,
+            duplicate_second,
+            identity_first,
+            identity_second,
+        ),
+        raw_items=(interface,),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert len(errors) == 3
+
+    assert tuple(
+        error.source_path
+        for error in errors
+    ) == (
+        "updates.sensors[1]",
+        "updates.sensors[3]",
+        "files[0].interfaces[0]",
+    )
+
