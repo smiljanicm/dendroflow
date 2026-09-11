@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from dendroflow.configuration import metadata as metadata_db
 from dendroflow.configuration import raw as raw_db
 from dendroflow.configuration.metadata import MetadataRow
@@ -12,6 +14,7 @@ from dendroflow.configuration.plan import (
     ResolvedInterfaceValues,
     ResolvedSensorValues,
 )
+from dendroflow.configuration.resolution import orchestration
 from dendroflow.configuration.resolution.orchestration import (
     resolve_config,
 )
@@ -541,5 +544,158 @@ files:
         resource_type="deployment",
         database_id=41,
     )
+
+
+def test_deployment_update_conflicting_with_persisted_history_is_not_applicable(
+    tmp_path,
+    monkeypatch,
+):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+updates:
+  deployments:
+    - update:
+        valid_from: "2025-01-01T00:00:00+00:00"
+      set:
+        valid_from: "2025-03-01T00:00:00+00:00"
+        valid_to: "2025-05-01T00:00:00+00:00"
+""",
+        encoding="utf-8",
+    )
+
+    def fake_find_deployments(**kwargs):
+        # Selector lookup for the deployment being updated.
+        if kwargs.get("valid_from") is not None:
+            return (
+                MetadataRow(
+                    database_id=41,
+                    values={
+                        "sensor_id": 11,
+                        "location_id": 21,
+                        "variable_id": 31,
+                        "valid_from": datetime(
+                            2025,
+                            1,
+                            1,
+                            tzinfo=timezone.utc,
+                        ),
+                        "valid_to": datetime(
+                            2025,
+                            2,
+                            1,
+                            tzinfo=timezone.utc,
+                        ),
+                    },
+                ),
+            )
+
+        # Persisted-history lookup for sensor 11 / variable 31.
+        assert kwargs.get("sensor_id") == 11
+        assert kwargs.get("variable_id") == 31
+
+        return (
+            # The row being updated: D7 must ignore this one.
+            MetadataRow(
+                database_id=41,
+                values={
+                    "sensor_id": 11,
+                    "location_id": 21,
+                    "variable_id": 31,
+                    "valid_from": datetime(
+                        2025,
+                        1,
+                        1,
+                        tzinfo=timezone.utc,
+                    ),
+                    "valid_to": datetime(
+                        2025,
+                        2,
+                        1,
+                        tzinfo=timezone.utc,
+                    ),
+                },
+            ),
+            # Untouched persisted deployment that conflicts
+            # with the requested final interval.
+            MetadataRow(
+                database_id=42,
+                values={
+                    "sensor_id": 11,
+                    "location_id": 22,
+                    "variable_id": 31,
+                    "valid_from": datetime(
+                        2025,
+                        4,
+                        1,
+                        tzinfo=timezone.utc,
+                    ),
+                    "valid_to": datetime(
+                        2025,
+                        6,
+                        1,
+                        tzinfo=timezone.utc,
+                    ),
+                },
+            ),
+        )
+
+    monkeypatch.setattr(
+        metadata_db,
+        "find_deployments",
+        fake_find_deployments,
+    )
+
+    monkeypatch.setattr(
+        orchestration,
+        "find_deployments",
+        fake_find_deployments,
+    )
+
+    config = load_config(config_path)
+    plan = resolve_config(config)
+
+    # The UPDATE itself resolved successfully.
+    assert len(plan.metadata_items) == 1
+
+    item = plan.metadata_items[0]
+
+    assert item.plan_id == "updates.deployments[0]"
+    assert item.resource_type == "deployment"
+    assert item.action == PlanAction.UPDATE
+    assert item.database_id == 41
+
+    assert isinstance(
+        item.values,
+        ResolvedDeploymentValues,
+    )
+    assert item.values.valid_from == datetime(
+        2025,
+        3,
+        1,
+        tzinfo=timezone.utc,
+    )
+    assert item.values.valid_to == datetime(
+        2025,
+        5,
+        1,
+        tzinfo=timezone.utc,
+    )
+
+    # Changing valid_from is an identity change.
+    assert item.requires_confirmation is True
+    assert plan.requires_confirmation is True
+
+    # But D7 rejects the final state because it overlaps
+    # untouched deployment_id 42.
+    assert len(plan.errors) == 1
+
+    error = plan.errors[0]
+
+    assert error.code == PlanErrorCode.CONFLICT
+    assert error.resource_type == "deployment"
+    assert error.source_path == "updates.deployments[0]"
+
+    assert plan.can_apply is False
 
 
