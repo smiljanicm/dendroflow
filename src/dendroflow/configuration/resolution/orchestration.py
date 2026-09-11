@@ -15,6 +15,10 @@ from .metadata import (
     resolve_simple_declarations,
     resolve_simple_reference_aliases,
 )
+from .raw import (
+    resolve_file_declarations,
+    resolve_interface_declarations,
+)
 
 
 def resolve_metadata_config(
@@ -147,6 +151,46 @@ def resolve_metadata_config(
     return ResolvedPlan(
         metadata_items=tuple(metadata_items),
         raw_items=(),
+        bindings=tuple(bindings),
+        errors=tuple(errors),
+        warnings=(),
+    )
+
+
+def resolve_raw_config(
+    config: ConfigModel,
+    existing_bindings: tuple[PlanBinding, ...] = (),
+) -> ResolvedPlan:
+    """Resolve validated CONFIG against dendroflow_raw."""
+
+    validate_config(config)
+
+    raw_items: list[ResolvedPlanItem] = []
+    bindings: list[PlanBinding] = []
+    errors: list[PlanError] = []
+
+    # Files.
+    file_items, file_bindings, file_errors = (
+        resolve_file_declarations(config)
+    )
+    raw_items.extend(file_items)
+    bindings.extend(file_bindings)
+    errors.extend(file_errors)
+
+    # Interfaces.
+    interface_items, interface_errors = (
+        resolve_interface_declarations(
+            config,
+            file_items=file_items,
+            existing_bindings=existing_bindings,
+        )
+    )
+    raw_items.extend(interface_items)
+    errors.extend(interface_errors)
+
+    return ResolvedPlan(
+        metadata_items=(),
+        raw_items=tuple(raw_items),
         bindings=tuple(bindings),
         errors=tuple(errors),
         warnings=(),
