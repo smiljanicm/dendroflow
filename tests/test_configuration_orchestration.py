@@ -6,6 +6,7 @@ from dendroflow.configuration.plan import (
     PlanBinding,
     PlannedRef,
     ResolvedFileValues,
+    ResolvedInterfaceValues,
     ResolvedPlan,
     ResolvedPlanItem,
     ResolvedSensorValues,
@@ -154,4 +155,176 @@ def test_resolve_config_combines_subsystem_plans(
     )
     assert plan.errors == ()
     assert plan.warnings == ()
+
+
+def test_resolve_config_forwards_metadata_bindings(
+    monkeypatch,
+):
+    config = ConfigModel()
+
+    metadata_binding = PlanBinding(
+        resource_type="sensors",
+        alias="sensor_01",
+        resource=ExistingRef(
+            resource_type="sensor",
+            database_id=17,
+        ),
+    )
+
+    metadata_plan = ResolvedPlan(
+        bindings=(metadata_binding,),
+    )
+
+    received_update_bindings = []
+    received_raw_bindings = []
+
+    def fake_resolve_update_config(
+        config,
+        existing_bindings=(),
+    ):
+        received_update_bindings.append(existing_bindings)
+        return ResolvedPlan()
+
+    def fake_resolve_raw_config(
+        config,
+        existing_bindings=(),
+    ):
+        received_raw_bindings.append(existing_bindings)
+        return ResolvedPlan()
+
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_metadata_config",
+        lambda config: metadata_plan,
+    )
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_update_config",
+        fake_resolve_update_config,
+    )
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_raw_config",
+        fake_resolve_raw_config,
+    )
+
+    plan = resolve_config(config)
+
+    assert received_update_bindings == [
+        (metadata_binding,)
+    ]
+    assert received_raw_bindings == [
+        (metadata_binding,)
+    ]
+
+    assert plan.bindings == (
+        metadata_binding,
+    )
+
+
+def test_resolve_config_preserves_plan_order(
+    monkeypatch,
+):
+    config = ConfigModel()
+
+    metadata_item_1 = _sensor_item(
+        "sensors[0]",
+        PlanAction.REUSE,
+        17,
+    )
+    metadata_item_2 = _sensor_item(
+        "sensors[1]",
+        PlanAction.REUSE,
+        18,
+    )
+
+    update_item_1 = _sensor_item(
+        "updates.sensors[0]",
+        PlanAction.UPDATE,
+        19,
+    )
+    update_item_2 = _sensor_item(
+        "updates.sensors[1]",
+        PlanAction.UPDATE,
+        20,
+    )
+
+    raw_item_1 = _file_item()
+
+    raw_item_2 = ResolvedPlanItem(
+        plan_id="files[0].interfaces[0]",
+        resource_type="interface",
+        action=PlanAction.CREATE,
+        values=ResolvedInterfaceValues(
+            file=PlannedRef(
+                resource_type="file",
+                plan_id="files[0]",
+            ),
+            deployment=ExistingRef(
+                resource_type="deployment",
+                database_id=41,
+            ),
+            timestamp_column="TIMESTAMP",
+            values_column="Lvl_cm_Avg",
+            unit="cm",
+        ),
+        source_path="files[0].interfaces[0]",
+    )
+
+    metadata_plan = ResolvedPlan(
+        metadata_items=(
+            metadata_item_1,
+            metadata_item_2,
+        ),
+    )
+
+    update_plan = ResolvedPlan(
+        metadata_items=(
+            update_item_1,
+            update_item_2,
+        ),
+    )
+
+    raw_plan = ResolvedPlan(
+        raw_items=(
+            raw_item_1,
+            raw_item_2,
+        ),
+    )
+
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_metadata_config",
+        lambda config: metadata_plan,
+    )
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_update_config",
+        lambda config, existing_bindings=(): update_plan,
+    )
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_raw_config",
+        lambda config, existing_bindings=(): raw_plan,
+    )
+
+    plan = resolve_config(config)
+
+    assert [
+        item.plan_id
+        for item in plan.metadata_items
+    ] == [
+        "sensors[0]",
+        "sensors[1]",
+        "updates.sensors[0]",
+        "updates.sensors[1]",
+    ]
+
+    assert [
+        item.plan_id
+        for item in plan.raw_items
+    ] == [
+        "files[0]",
+        "files[0].interfaces[0]",
+    ]
 
