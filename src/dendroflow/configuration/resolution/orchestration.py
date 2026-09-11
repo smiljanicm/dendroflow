@@ -19,6 +19,10 @@ from .raw import (
     resolve_file_declarations,
     resolve_interface_declarations,
 )
+from .updates import (
+    resolve_deployment_updates,
+    resolve_sensor_updates,
+)
 
 
 def resolve_metadata_config(
@@ -192,6 +196,42 @@ def resolve_raw_config(
         metadata_items=(),
         raw_items=tuple(raw_items),
         bindings=tuple(bindings),
+        errors=tuple(errors),
+        warnings=(),
+    )
+
+
+def resolve_update_config(
+    config: ConfigModel,
+    existing_bindings: tuple[PlanBinding, ...] = (),
+) -> ResolvedPlan:
+    """Resolve explicit CONFIG updates."""
+
+    validate_config(config)
+
+    metadata_items: list[ResolvedPlanItem] = []
+    errors: list[PlanError] = []
+
+    sensor_items, sensor_errors = resolve_sensor_updates(
+        config,
+        existing_bindings=existing_bindings,
+    )
+    metadata_items.extend(sensor_items)
+    errors.extend(sensor_errors)
+
+    deployment_items, deployment_errors = (
+        resolve_deployment_updates(
+            config,
+            existing_bindings=existing_bindings,
+        )
+    )
+    metadata_items.extend(deployment_items)
+    errors.extend(deployment_errors)
+
+    return ResolvedPlan(
+        metadata_items=tuple(metadata_items),
+        raw_items=(),
+        bindings=(),
         errors=tuple(errors),
         warnings=(),
     )
