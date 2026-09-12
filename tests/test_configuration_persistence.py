@@ -6,6 +6,10 @@ from dendroflow.configuration.persistence.context import (
 from dendroflow.configuration.persistence.models import (
     ApplyError,
     ApplyErrorCode,
+    ApplyItemResult,
+    ApplyResult,
+    ApplyStageStatus,
+    ApplyStatus,
 )
 from dendroflow.configuration.persistence.preflight import (
     validate_plan_for_apply,
@@ -274,4 +278,161 @@ def test_apply_context_rejects_non_positive_database_id(
             database_id=database_id,
         )
 
+
+def test_apply_result_success_state():
+    result = ApplyResult(
+        status=ApplyStatus.SUCCESS,
+        metadata_status=ApplyStageStatus.COMMITTED,
+        raw_status=ApplyStageStatus.COMMITTED,
+    )
+
+    assert result.status == ApplyStatus.SUCCESS
+    assert result.metadata_status == ApplyStageStatus.COMMITTED
+    assert result.raw_status == ApplyStageStatus.COMMITTED
+    assert result.items == ()
+
+
+def test_apply_result_failed_state():
+    result = ApplyResult(
+        status=ApplyStatus.FAILED,
+        metadata_status=ApplyStageStatus.FAILED,
+        raw_status=ApplyStageStatus.NOT_REQUIRED,
+    )
+
+    assert result.status == ApplyStatus.FAILED
+    assert result.metadata_status == ApplyStageStatus.FAILED
+    assert result.raw_status == ApplyStageStatus.NOT_REQUIRED
+
+
+def test_apply_result_partial_state():
+    result = ApplyResult(
+        status=ApplyStatus.PARTIAL,
+        metadata_status=ApplyStageStatus.COMMITTED,
+        raw_status=ApplyStageStatus.FAILED,
+    )
+
+    assert result.status == ApplyStatus.PARTIAL
+    assert result.metadata_status == ApplyStageStatus.COMMITTED
+    assert result.raw_status == ApplyStageStatus.FAILED
+
+
+def test_apply_result_metadata_only_success():
+    result = ApplyResult(
+        status=ApplyStatus.SUCCESS,
+        metadata_status=ApplyStageStatus.COMMITTED,
+        raw_status=ApplyStageStatus.NOT_REQUIRED,
+    )
+
+    assert result.status == ApplyStatus.SUCCESS
+
+
+def test_apply_result_empty_success():
+    result = ApplyResult(
+        status=ApplyStatus.SUCCESS,
+        metadata_status=ApplyStageStatus.NOT_REQUIRED,
+        raw_status=ApplyStageStatus.NOT_REQUIRED,
+    )
+
+    assert result.status == ApplyStatus.SUCCESS
+
+
+def test_apply_item_result_records_persisted_identity():
+    item = ApplyItemResult(
+        plan_id="sensors[0]",
+        resource_type="sensor",
+        action=PlanAction.CREATE,
+        database_id=52,
+    )
+
+    assert item.plan_id == "sensors[0]"
+    assert item.resource_type == "sensor"
+    assert item.action == PlanAction.CREATE
+    assert item.database_id == 52
+
+
+@pytest.mark.parametrize(
+    "database_id",
+    [0, -1],
+)
+def test_apply_item_result_rejects_non_positive_database_id(
+    database_id,
+):
+    with pytest.raises(
+        ValueError,
+        match="database_id must be positive",
+    ):
+        ApplyItemResult(
+            plan_id="sensors[0]",
+            resource_type="sensor",
+            action=PlanAction.CREATE,
+            database_id=database_id,
+        )
+
+
+
+@pytest.mark.parametrize(
+    (
+        "status",
+        "metadata_status",
+        "raw_status",
+    ),
+    [
+        (
+            ApplyStatus.SUCCESS,
+            ApplyStageStatus.FAILED,
+            ApplyStageStatus.COMMITTED,
+        ),
+        (
+            ApplyStatus.SUCCESS,
+            ApplyStageStatus.COMMITTED,
+            ApplyStageStatus.FAILED,
+        ),
+        (
+            ApplyStatus.FAILED,
+            ApplyStageStatus.COMMITTED,
+            ApplyStageStatus.NOT_REQUIRED,
+        ),
+        (
+            ApplyStatus.FAILED,
+            ApplyStageStatus.NOT_REQUIRED,
+            ApplyStageStatus.COMMITTED,
+        ),
+        (
+            ApplyStatus.PARTIAL,
+            ApplyStageStatus.NOT_REQUIRED,
+            ApplyStageStatus.FAILED,
+        ),
+        (
+            ApplyStatus.PARTIAL,
+            ApplyStageStatus.COMMITTED,
+            ApplyStageStatus.NOT_REQUIRED,
+        ),
+        (
+            ApplyStatus.PARTIAL,
+            ApplyStageStatus.COMMITTED,
+            ApplyStageStatus.COMMITTED,
+        ),
+    ],
+)
+def test_apply_result_rejects_invalid_stage_state(
+    status,
+    metadata_status,
+    raw_status,
+):
+    with pytest.raises(ValueError):
+        ApplyResult(
+            status=status,
+            metadata_status=metadata_status,
+            raw_status=raw_status,
+        )
+
+
+def test_apply_result_raw_only_success():
+    result = ApplyResult(
+        status=ApplyStatus.SUCCESS,
+        metadata_status=ApplyStageStatus.NOT_REQUIRED,
+        raw_status=ApplyStageStatus.COMMITTED,
+    )
+
+    assert result.status == ApplyStatus.SUCCESS
 
