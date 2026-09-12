@@ -1,5 +1,8 @@
+from dataclasses import FrozenInstanceError
+
 import pytest
 
+from dendroflow.configuration import persistence
 from dendroflow.configuration.persistence.context import (
     ApplyContext,
 )
@@ -435,4 +438,79 @@ def test_apply_result_raw_only_success():
     )
 
     assert result.status == ApplyStatus.SUCCESS
+
+
+def test_persistence_public_api_exports_e1_contracts():
+    assert persistence.ApplyContext is ApplyContext
+    assert persistence.ApplyError is ApplyError
+    assert persistence.ApplyErrorCode is ApplyErrorCode
+    assert persistence.ApplyItemResult is ApplyItemResult
+    assert persistence.ApplyResult is ApplyResult
+    assert persistence.ApplyStageStatus is ApplyStageStatus
+    assert persistence.ApplyStatus is ApplyStatus
+    assert (
+        persistence.validate_plan_for_apply
+        is validate_plan_for_apply
+    )
+
+
+def test_apply_item_result_is_immutable():
+    item = ApplyItemResult(
+        plan_id="sensors[0]",
+        resource_type="sensor",
+        action=PlanAction.CREATE,
+        database_id=52,
+    )
+
+    with pytest.raises(FrozenInstanceError):
+        item.database_id = 53
+
+
+def test_apply_result_is_immutable():
+    result = ApplyResult(
+        status=ApplyStatus.SUCCESS,
+        metadata_status=ApplyStageStatus.COMMITTED,
+        raw_status=ApplyStageStatus.NOT_REQUIRED,
+    )
+
+    with pytest.raises(FrozenInstanceError):
+        result.status = ApplyStatus.FAILED
+
+
+def test_e1_apply_contracts_compose_without_database_access():
+    plan = ResolvedPlan()
+
+    validate_plan_for_apply(plan)
+
+    context = ApplyContext()
+    context.register(
+        plan_id="sensors[0]",
+        resource_type="sensor",
+        database_id=52,
+    )
+
+    database_id = context.resolve(
+        PlannedRef(
+            resource_type="sensor",
+            plan_id="sensors[0]",
+        )
+    )
+
+    item = ApplyItemResult(
+        plan_id="sensors[0]",
+        resource_type="sensor",
+        action=PlanAction.CREATE,
+        database_id=database_id,
+    )
+
+    result = ApplyResult(
+        status=ApplyStatus.SUCCESS,
+        metadata_status=ApplyStageStatus.COMMITTED,
+        raw_status=ApplyStageStatus.NOT_REQUIRED,
+        items=(item,),
+    )
+
+    assert result.items == (item,)
+    assert result.items[0].database_id == 52
+
 
