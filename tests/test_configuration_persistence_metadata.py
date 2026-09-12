@@ -12,12 +12,15 @@ from dendroflow.configuration.persistence.models import (
     ApplyItemResult,
 )
 from dendroflow.configuration.plan import (
+    ExistingRef,
     FieldChange,
     PlanAction,
     PlannedRef,
     ResolvedLocationTypeValues,
     ResolvedPlanItem,
+    ResolvedSensorModelValues,
     ResolvedSensorTypeValues,
+    ResolvedSensorValues,
     ResolvedSiteValues,
     ResolvedVariableValues,
 )
@@ -487,4 +490,167 @@ def test_metadata_create_variable_uses_resolved_values():
         False,
         "Water-table level",
     )
+
+
+def test_metadata_create_persists_sensor_model_with_existing_sensor_type():
+    connection = FakeConnection(returned_id=51)
+    context = ApplyContext()
+
+    item = ResolvedPlanItem(
+        plan_id="sensor_models[0]",
+        resource_type="sensor_model",
+        action=PlanAction.CREATE,
+        values=ResolvedSensorModelValues(
+            model="CS451",
+            manufacturer="Campbell Scientific",
+            sensor_type=ExistingRef(
+                resource_type="sensor_type",
+                database_id=31,
+            ),
+        ),
+    )
+
+    result = create_metadata_item(
+        connection,
+        item,
+        context,
+    )
+
+    assert result == ApplyItemResult(
+        plan_id="sensor_models[0]",
+        resource_type="sensor_model",
+        action=PlanAction.CREATE,
+        database_id=51,
+    )
+
+    query, params = connection.calls[0]
+
+    assert "INSERT INTO sensor_models" in query
+    assert "RETURNING sensor_model_id" in query
+    assert params == (
+        "CS451",
+        "Campbell Scientific",
+        31,
+    )
+
+
+def test_metadata_create_sensor_model_resolves_planned_sensor_type():
+    connection = FakeConnection(returned_id=51)
+    context = ApplyContext()
+
+    context.register(
+        plan_id="sensor_types[0]",
+        resource_type="sensor_type",
+        database_id=31,
+    )
+
+    item = ResolvedPlanItem(
+        plan_id="sensor_models[0]",
+        resource_type="sensor_model",
+        action=PlanAction.CREATE,
+        values=ResolvedSensorModelValues(
+            model="CS451",
+            manufacturer="Campbell Scientific",
+            sensor_type=PlannedRef(
+                resource_type="sensor_type",
+                plan_id="sensor_types[0]",
+            ),
+        ),
+    )
+
+    create_metadata_item(
+        connection,
+        item,
+        context,
+    )
+
+    _, params = connection.calls[0]
+
+    assert params == (
+        "CS451",
+        "Campbell Scientific",
+        31,
+    )
+
+
+def test_metadata_create_persists_sensor_with_existing_sensor_model():
+    connection = FakeConnection(returned_id=61)
+    context = ApplyContext()
+
+    item = ResolvedPlanItem(
+        plan_id="sensors[0]",
+        resource_type="sensor",
+        action=PlanAction.CREATE,
+        values=ResolvedSensorValues(
+            sensor_model=ExistingRef(
+                resource_type="sensor_model",
+                database_id=51,
+            ),
+            serial_number="SN-001",
+            description="Main water-level sensor",
+        ),
+    )
+
+    result = create_metadata_item(
+        connection,
+        item,
+        context,
+    )
+
+    assert result == ApplyItemResult(
+        plan_id="sensors[0]",
+        resource_type="sensor",
+        action=PlanAction.CREATE,
+        database_id=61,
+    )
+
+    query, params = connection.calls[0]
+
+    assert "INSERT INTO sensors" in query
+    assert "RETURNING sensor_id" in query
+    assert params == (
+        51,
+        "SN-001",
+        "Main water-level sensor",
+    )
+
+
+def test_metadata_create_sensor_resolves_planned_sensor_model():
+    connection = FakeConnection(returned_id=61)
+    context = ApplyContext()
+
+    context.register(
+        plan_id="sensor_models[0]",
+        resource_type="sensor_model",
+        database_id=51,
+    )
+
+    item = ResolvedPlanItem(
+        plan_id="sensors[0]",
+        resource_type="sensor",
+        action=PlanAction.CREATE,
+        values=ResolvedSensorValues(
+            sensor_model=PlannedRef(
+                resource_type="sensor_model",
+                plan_id="sensor_models[0]",
+            ),
+            serial_number="SN-001",
+            description="Main water-level sensor",
+        ),
+    )
+
+    create_metadata_item(
+        connection,
+        item,
+        context,
+    )
+
+    _, params = connection.calls[0]
+
+    assert params == (
+        51,
+        "SN-001",
+        "Main water-level sensor",
+    )
+
 
