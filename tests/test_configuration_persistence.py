@@ -1,5 +1,8 @@
 import pytest
 
+from dendroflow.configuration.persistence.context import (
+    ApplyContext,
+)
 from dendroflow.configuration.persistence.models import (
     ApplyError,
     ApplyErrorCode,
@@ -13,6 +16,7 @@ from dendroflow.configuration.plan import (
     PlanAction,
     PlanError,
     PlanErrorCode,
+    PlannedRef,
     ResolvedPlan,
     ResolvedPlanItem,
     ResolvedSensorValues,
@@ -161,4 +165,113 @@ def test_confirmation_does_not_make_invalid_plan_applicable():
         exc_info.value.code
         == ApplyErrorCode.PLAN_NOT_APPLICABLE
     )
+
+
+def test_apply_context_resolves_existing_ref():
+    context = ApplyContext()
+
+    reference = ExistingRef(
+        resource_type="sensor",
+        database_id=17,
+    )
+
+    assert context.resolve(reference) == 17
+
+
+def test_apply_context_resolves_registered_planned_ref():
+    context = ApplyContext()
+
+    context.register(
+        plan_id="sensors[0]",
+        resource_type="sensor",
+        database_id=52,
+    )
+
+    reference = PlannedRef(
+        resource_type="sensor",
+        plan_id="sensors[0]",
+    )
+
+    assert context.resolve(reference) == 52
+
+
+def test_apply_context_rejects_unresolved_planned_ref():
+    context = ApplyContext()
+
+    reference = PlannedRef(
+        resource_type="sensor",
+        plan_id="sensors[0]",
+    )
+
+    with pytest.raises(ApplyError) as exc_info:
+        context.resolve(reference)
+
+    assert (
+        exc_info.value.code
+        == ApplyErrorCode.UNRESOLVED_PLANNED_REF
+    )
+
+
+def test_apply_context_rejects_planned_ref_with_wrong_resource_type():
+    context = ApplyContext()
+
+    context.register(
+        plan_id="sensors[0]",
+        resource_type="sensor",
+        database_id=52,
+    )
+
+    reference = PlannedRef(
+        resource_type="deployment",
+        plan_id="sensors[0]",
+    )
+
+    with pytest.raises(ApplyError) as exc_info:
+        context.resolve(reference)
+
+    assert (
+        exc_info.value.code
+        == ApplyErrorCode.UNRESOLVED_PLANNED_REF
+    )
+
+
+def test_apply_context_rejects_duplicate_plan_id_registration():
+    context = ApplyContext()
+
+    context.register(
+        plan_id="sensors[0]",
+        resource_type="sensor",
+        database_id=52,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="plan_id already registered",
+    ):
+        context.register(
+            plan_id="sensors[0]",
+            resource_type="sensor",
+            database_id=53,
+        )
+
+
+@pytest.mark.parametrize(
+    "database_id",
+    [0, -1],
+)
+def test_apply_context_rejects_non_positive_database_id(
+    database_id,
+):
+    context = ApplyContext()
+
+    with pytest.raises(
+        ValueError,
+        match="database_id must be positive",
+    ):
+        context.register(
+            plan_id="sensors[0]",
+            resource_type="sensor",
+            database_id=database_id,
+        )
+
 
