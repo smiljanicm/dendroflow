@@ -1,5 +1,6 @@
 from ..plan import (
     PlanAction,
+    ResolvedDeploymentValues,
     ResolvedLocationLabelValues,
     ResolvedLocationTypeValues,
     ResolvedLocationValues,
@@ -141,7 +142,14 @@ def create_metadata_item(
             item,
             context,
         )
-    
+
+    if item.resource_type == "deployment":
+        return _create_deployment(
+            connection,
+            item,
+            context,
+        )
+
     raise NotImplementedError(
         "METADATA CREATE writer not implemented for "
         f"{item.resource_type}"
@@ -483,6 +491,69 @@ def _create_location_label(
         (
             location_id,
             item.values.label,
+            item.values.valid_from,
+            item.values.valid_to,
+        ),
+    ).fetchone()
+
+    database_id = row[0]
+
+    result = ApplyItemResult(
+        plan_id=item.plan_id,
+        resource_type=item.resource_type,
+        action=item.action,
+        database_id=database_id,
+    )
+
+    context.register(
+        plan_id=item.plan_id,
+        resource_type=item.resource_type,
+        database_id=database_id,
+    )
+
+    return result
+
+
+def _create_deployment(
+    connection: object,
+    item: ResolvedPlanItem,
+    context: ApplyContext,
+) -> ApplyItemResult:
+    if not isinstance(
+        item.values,
+        ResolvedDeploymentValues,
+    ):
+        raise TypeError(
+            "deployment CREATE requires "
+            "ResolvedDeploymentValues"
+        )
+
+    sensor_id = context.resolve(
+        item.values.sensor
+    )
+    location_id = context.resolve(
+        item.values.location
+    )
+    variable_id = context.resolve(
+        item.values.variable
+    )
+
+    row = connection.execute(
+        """
+        INSERT INTO deployments (
+            sensor_id,
+            location_id,
+            variable_id,
+            valid_from,
+            valid_to
+        )
+        VALUES (%s, %s, %s, %s, %s)
+        RETURNING deployment_id
+        """,
+        (
+            sensor_id,
+            location_id,
+            variable_id,
             item.values.valid_from,
             item.values.valid_to,
         ),

@@ -18,6 +18,7 @@ from dendroflow.configuration.plan import (
     FieldChange,
     PlanAction,
     PlannedRef,
+    ResolvedDeploymentValues,
     ResolvedLocationLabelValues,
     ResolvedLocationTypeValues,
     ResolvedLocationValues,
@@ -882,4 +883,143 @@ def test_metadata_create_location_label_resolves_planned_location():
         valid_to,
     )
 
+
+def test_metadata_create_persists_deployment_with_existing_dependencies():
+    connection = FakeConnection(returned_id=91)
+    context = ApplyContext()
+
+    valid_from = datetime(
+        2026,
+        1,
+        1,
+        tzinfo=timezone.utc,
+    )
+
+    item = ResolvedPlanItem(
+        plan_id="deployments[0]",
+        resource_type="deployment",
+        action=PlanAction.CREATE,
+        values=ResolvedDeploymentValues(
+            sensor=ExistingRef(
+                resource_type="sensor",
+                database_id=61,
+            ),
+            location=ExistingRef(
+                resource_type="location",
+                database_id=71,
+            ),
+            variable=ExistingRef(
+                resource_type="variable",
+                database_id=41,
+            ),
+            valid_from=valid_from,
+            valid_to=None,
+        ),
+    )
+
+    result = create_metadata_item(
+        connection,
+        item,
+        context,
+    )
+
+    assert result == ApplyItemResult(
+        plan_id="deployments[0]",
+        resource_type="deployment",
+        action=PlanAction.CREATE,
+        database_id=91,
+    )
+
+    assert context.resolve(
+        PlannedRef(
+            resource_type="deployment",
+            plan_id="deployments[0]",
+        )
+    ) == 91
+
+    assert len(connection.calls) == 1
+
+    query, params = connection.calls[0]
+
+    assert "INSERT INTO deployments" in query
+    assert "RETURNING deployment_id" in query
+    assert params == (
+        61,
+        71,
+        41,
+        valid_from,
+        None,
+    )
+
+
+def test_metadata_create_deployment_resolves_planned_dependencies():
+    connection = FakeConnection(returned_id=91)
+    context = ApplyContext()
+
+    context.register(
+        plan_id="sensors[0]",
+        resource_type="sensor",
+        database_id=61,
+    )
+    context.register(
+        plan_id="locations[0]",
+        resource_type="location",
+        database_id=71,
+    )
+    context.register(
+        plan_id="variables[0]",
+        resource_type="variable",
+        database_id=41,
+    )
+
+    valid_from = datetime(
+        2026,
+        1,
+        1,
+        tzinfo=timezone.utc,
+    )
+    valid_to = datetime(
+        2027,
+        1,
+        1,
+        tzinfo=timezone.utc,
+    )
+
+    item = ResolvedPlanItem(
+        plan_id="deployments[0]",
+        resource_type="deployment",
+        action=PlanAction.CREATE,
+        values=ResolvedDeploymentValues(
+            sensor=PlannedRef(
+                resource_type="sensor",
+                plan_id="sensors[0]",
+            ),
+            location=PlannedRef(
+                resource_type="location",
+                plan_id="locations[0]",
+            ),
+            variable=PlannedRef(
+                resource_type="variable",
+                plan_id="variables[0]",
+            ),
+            valid_from=valid_from,
+            valid_to=valid_to,
+        ),
+    )
+
+    create_metadata_item(
+        connection,
+        item,
+        context,
+    )
+
+    _, params = connection.calls[0]
+
+    assert params == (
+        61,
+        71,
+        41,
+        valid_from,
+        valid_to,
+    )
 
