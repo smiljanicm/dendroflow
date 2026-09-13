@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import pytest
 
 from dendroflow.configuration.persistence.context import (
@@ -16,7 +18,9 @@ from dendroflow.configuration.plan import (
     FieldChange,
     PlanAction,
     PlannedRef,
+    ResolvedLocationLabelValues,
     ResolvedLocationTypeValues,
+    ResolvedLocationValues,
     ResolvedPlanItem,
     ResolvedSensorModelValues,
     ResolvedSensorTypeValues,
@@ -651,6 +655,231 @@ def test_metadata_create_sensor_resolves_planned_sensor_model():
         51,
         "SN-001",
         "Main water-level sensor",
+    )
+
+
+def test_metadata_create_persists_location_with_existing_dependencies():
+    connection = FakeConnection(returned_id=71)
+    context = ApplyContext()
+
+    item = ResolvedPlanItem(
+        plan_id="locations[0]",
+        resource_type="location",
+        action=PlanAction.CREATE,
+        values=ResolvedLocationValues(
+            site=ExistingRef(
+                resource_type="site",
+                database_id=11,
+            ),
+            location_type=ExistingRef(
+                resource_type="location_type",
+                database_id=21,
+            ),
+            latitude=54.123,
+            longitude=13.456,
+            height_above_ground=1.5,
+            azimuth=180.0,
+        ),
+    )
+
+    result = create_metadata_item(
+        connection,
+        item,
+        context,
+    )
+
+    assert result == ApplyItemResult(
+        plan_id="locations[0]",
+        resource_type="location",
+        action=PlanAction.CREATE,
+        database_id=71,
+    )
+
+    assert context.resolve(
+        PlannedRef(
+            resource_type="location",
+            plan_id="locations[0]",
+        )
+    ) == 71
+
+    assert len(connection.calls) == 1
+
+    query, params = connection.calls[0]
+
+    assert "INSERT INTO locations" in query
+    assert "RETURNING location_id" in query
+    assert params == (
+        11,
+        21,
+        54.123,
+        13.456,
+        1.5,
+        180.0,
+    )
+
+
+def test_metadata_create_location_resolves_planned_dependencies():
+    connection = FakeConnection(returned_id=71)
+    context = ApplyContext()
+
+    context.register(
+        plan_id="sites[0]",
+        resource_type="site",
+        database_id=11,
+    )
+    context.register(
+        plan_id="location_types[0]",
+        resource_type="location_type",
+        database_id=21,
+    )
+
+    item = ResolvedPlanItem(
+        plan_id="locations[0]",
+        resource_type="location",
+        action=PlanAction.CREATE,
+        values=ResolvedLocationValues(
+            site=PlannedRef(
+                resource_type="site",
+                plan_id="sites[0]",
+            ),
+            location_type=PlannedRef(
+                resource_type="location_type",
+                plan_id="location_types[0]",
+            ),
+            latitude=None,
+            longitude=None,
+            height_above_ground=0.0,
+            azimuth=None,
+        ),
+    )
+
+    create_metadata_item(
+        connection,
+        item,
+        context,
+    )
+
+    _, params = connection.calls[0]
+
+    assert params == (
+        11,
+        21,
+        None,
+        None,
+        0.0,
+        None,
+    )
+
+
+def test_metadata_create_persists_location_label_with_existing_location():
+    connection = FakeConnection(returned_id=81)
+    context = ApplyContext()
+
+    valid_from = datetime(
+        2026,
+        1,
+        1,
+        tzinfo=timezone.utc,
+    )
+
+    item = ResolvedPlanItem(
+        plan_id="location_labels[0]",
+        resource_type="location_label",
+        action=PlanAction.CREATE,
+        values=ResolvedLocationLabelValues(
+            location=ExistingRef(
+                resource_type="location",
+                database_id=71,
+            ),
+            label="Tree 12",
+            valid_from=valid_from,
+            valid_to=None,
+        ),
+    )
+
+    result = create_metadata_item(
+        connection,
+        item,
+        context,
+    )
+
+    assert result == ApplyItemResult(
+        plan_id="location_labels[0]",
+        resource_type="location_label",
+        action=PlanAction.CREATE,
+        database_id=81,
+    )
+
+    assert context.resolve(
+        PlannedRef(
+            resource_type="location_label",
+            plan_id="location_labels[0]",
+        )
+    ) == 81
+
+    query, params = connection.calls[0]
+
+    assert "INSERT INTO location_labels" in query
+    assert "RETURNING location_label_id" in query
+    assert params == (
+        71,
+        "Tree 12",
+        valid_from,
+        None,
+    )
+
+
+def test_metadata_create_location_label_resolves_planned_location():
+    connection = FakeConnection(returned_id=81)
+    context = ApplyContext()
+
+    context.register(
+        plan_id="locations[0]",
+        resource_type="location",
+        database_id=71,
+    )
+
+    valid_from = datetime(
+        2026,
+        1,
+        1,
+        tzinfo=timezone.utc,
+    )
+    valid_to = datetime(
+        2027,
+        1,
+        1,
+        tzinfo=timezone.utc,
+    )
+
+    item = ResolvedPlanItem(
+        plan_id="locations[0].initial_label",
+        resource_type="location_label",
+        action=PlanAction.CREATE,
+        values=ResolvedLocationLabelValues(
+            location=PlannedRef(
+                resource_type="location",
+                plan_id="locations[0]",
+            ),
+            label="Tree 12",
+            valid_from=valid_from,
+            valid_to=valid_to,
+        ),
+    )
+
+    create_metadata_item(
+        connection,
+        item,
+        context,
+    )
+
+    _, params = connection.calls[0]
+
+    assert params == (
+        71,
+        "Tree 12",
+        valid_from,
+        valid_to,
     )
 
 

@@ -1,6 +1,8 @@
 from ..plan import (
     PlanAction,
+    ResolvedLocationLabelValues,
     ResolvedLocationTypeValues,
+    ResolvedLocationValues,
     ResolvedPlanItem,
     ResolvedSensorModelValues,
     ResolvedSensorTypeValues,
@@ -91,13 +93,6 @@ def create_metadata_item(
             context,
         )
 
-    if item.resource_type == "site":
-        return _create_site(
-            connection,
-            item,
-            context,
-        )
-
     if item.resource_type == "location_type":
         return _create_location_type(
             connection,
@@ -128,6 +123,20 @@ def create_metadata_item(
 
     if item.resource_type == "sensor":
         return _create_sensor(
+            connection,
+            item,
+            context,
+        )
+
+    if item.resource_type == "location":
+        return _create_location(
+            connection,
+            item,
+            context,
+        )
+
+    if item.resource_type == "location_label":
+        return _create_location_label(
             connection,
             item,
             context,
@@ -380,4 +389,119 @@ def _create_sensor(
 
     return result
 
+
+def _create_location(
+    connection: object,
+    item: ResolvedPlanItem,
+    context: ApplyContext,
+) -> ApplyItemResult:
+    if not isinstance(
+        item.values,
+        ResolvedLocationValues,
+    ):
+        raise TypeError(
+            "location CREATE requires ResolvedLocationValues"
+        )
+
+    site_id = context.resolve(
+        item.values.site
+    )
+    location_type_id = context.resolve(
+        item.values.location_type
+    )
+
+    row = connection.execute(
+        """
+        INSERT INTO locations (
+            site_id,
+            location_type_id,
+            latitude,
+            longitude,
+            height_above_ground,
+            azimuth
+        )
+        VALUES (%s, %s, %s, %s, %s, %s)
+        RETURNING location_id
+        """,
+        (
+            site_id,
+            location_type_id,
+            item.values.latitude,
+            item.values.longitude,
+            item.values.height_above_ground,
+            item.values.azimuth,
+        ),
+    ).fetchone()
+
+    database_id = row[0]
+
+    result = ApplyItemResult(
+        plan_id=item.plan_id,
+        resource_type=item.resource_type,
+        action=item.action,
+        database_id=database_id,
+    )
+
+    context.register(
+        plan_id=item.plan_id,
+        resource_type=item.resource_type,
+        database_id=database_id,
+    )
+
+    return result
+
+
+def _create_location_label(
+    connection: object,
+    item: ResolvedPlanItem,
+    context: ApplyContext,
+) -> ApplyItemResult:
+    if not isinstance(
+        item.values,
+        ResolvedLocationLabelValues,
+    ):
+        raise TypeError(
+            "location_label CREATE requires "
+            "ResolvedLocationLabelValues"
+        )
+
+    location_id = context.resolve(
+        item.values.location
+    )
+
+    row = connection.execute(
+        """
+        INSERT INTO location_labels (
+            location_id,
+            label,
+            valid_from,
+            valid_to
+        )
+        VALUES (%s, %s, %s, %s)
+        RETURNING location_label_id
+        """,
+        (
+            location_id,
+            item.values.label,
+            item.values.valid_from,
+            item.values.valid_to,
+        ),
+    ).fetchone()
+
+    database_id = row[0]
+
+    result = ApplyItemResult(
+        plan_id=item.plan_id,
+        resource_type=item.resource_type,
+        action=item.action,
+        database_id=database_id,
+    )
+
+    context.register(
+        plan_id=item.plan_id,
+        resource_type=item.resource_type,
+        database_id=database_id,
+    )
+
+    return result
 
