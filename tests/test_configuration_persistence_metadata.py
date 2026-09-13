@@ -1296,3 +1296,236 @@ def test_metadata_create_dispatch_handles_location_chain():
         None,
     )
 
+
+def test_metadata_create_rejects_unresolved_planned_dependency():
+    context = ApplyContext()
+
+    item = ResolvedPlanItem(
+        plan_id="sensor_models[0]",
+        resource_type="sensor_model",
+        action=PlanAction.CREATE,
+        values=ResolvedSensorModelValues(
+            model="CS451",
+            manufacturer="Campbell Scientific",
+            sensor_type=PlannedRef(
+                resource_type="sensor_type",
+                plan_id="sensor_types[0]",
+            ),
+        ),
+    )
+
+    with pytest.raises(ApplyError) as exc_info:
+        create_metadata_item(
+            FailIfUsedConnection(),
+            item,
+            context,
+        )
+
+    assert (
+        exc_info.value.code
+        == ApplyErrorCode.UNRESOLVED_PLANNED_REF
+    )
+
+
+def test_metadata_create_rejects_wrong_planned_dependency_type():
+    context = ApplyContext()
+
+    context.register(
+        plan_id="sensor_types[0]",
+        resource_type="sensor_type",
+        database_id=31,
+    )
+
+    item = ResolvedPlanItem(
+        plan_id="sensor_models[0]",
+        resource_type="sensor_model",
+        action=PlanAction.CREATE,
+        values=ResolvedSensorModelValues(
+            model="CS451",
+            manufacturer="Campbell Scientific",
+            sensor_type=PlannedRef(
+                resource_type="location_type",
+                plan_id="sensor_types[0]",
+            ),
+        ),
+    )
+
+    with pytest.raises(ApplyError) as exc_info:
+        create_metadata_item(
+            FailIfUsedConnection(),
+            item,
+            context,
+        )
+
+    assert (
+        exc_info.value.code
+        == ApplyErrorCode.UNRESOLVED_PLANNED_REF
+    )
+
+
+class EmptyReturningConnection:
+    def execute(self, query, params):
+        return self
+
+    def fetchone(self):
+        return None
+
+
+def test_metadata_create_rejects_missing_returned_row():
+    context = ApplyContext()
+
+    item = ResolvedPlanItem(
+        plan_id="sites[0]",
+        resource_type="site",
+        action=PlanAction.CREATE,
+        values=ResolvedSiteValues(
+            site_code="SAN",
+            name="Sandhagen",
+        ),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="missing returned database id",
+    ):
+        create_metadata_item(
+            EmptyReturningConnection(),
+            item,
+            context,
+        )
+
+    with pytest.raises(ApplyError):
+        context.resolve(
+            PlannedRef(
+                resource_type="site",
+                plan_id="sites[0]",
+            )
+        )
+
+
+class MalformedReturningConnection:
+    def execute(self, query, params):
+        return self
+
+    def fetchone(self):
+        return ()
+
+
+def test_metadata_create_rejects_malformed_returned_row():
+    context = ApplyContext()
+
+    item = ResolvedPlanItem(
+        plan_id="sites[0]",
+        resource_type="site",
+        action=PlanAction.CREATE,
+        values=ResolvedSiteValues(
+            site_code="SAN",
+            name="Sandhagen",
+        ),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="missing returned database id",
+    ):
+        create_metadata_item(
+            MalformedReturningConnection(),
+            item,
+            context,
+        )
+
+
+class NonIntegerReturningConnection:
+    def execute(self, query, params):
+        return self
+
+    def fetchone(self):
+        return ("17",)
+
+
+def test_metadata_create_rejects_non_integer_returned_id():
+    context = ApplyContext()
+
+    item = ResolvedPlanItem(
+        plan_id="sites[0]",
+        resource_type="site",
+        action=PlanAction.CREATE,
+        values=ResolvedSiteValues(
+            site_code="SAN",
+            name="Sandhagen",
+        ),
+    )
+
+    with pytest.raises(
+        TypeError,
+        match="returned database id must be an integer",
+    ):
+        create_metadata_item(
+            NonIntegerReturningConnection(),
+            item,
+            context,
+        )
+
+
+def test_metadata_create_rejects_wrong_resolved_value_type():
+    item = ResolvedPlanItem(
+        plan_id="sites[0]",
+        resource_type="site",
+        action=PlanAction.CREATE,
+        values=ResolvedVariableValues(
+            variable="water_level",
+            derived=False,
+            description=None,
+        ),
+    )
+
+    context = ApplyContext()
+
+    with pytest.raises(
+        TypeError,
+        match="site CREATE requires ResolvedSiteValues",
+    ):
+        create_metadata_item(
+            FailIfUsedConnection(),
+            item,
+            context,
+        )
+
+
+def test_metadata_create_rejects_duplicate_plan_id_registration():
+    connection = FakeConnection(returned_id=18)
+    context = ApplyContext()
+
+    context.register(
+        plan_id="sites[0]",
+        resource_type="site",
+        database_id=17,
+    )
+
+    item = ResolvedPlanItem(
+        plan_id="sites[0]",
+        resource_type="site",
+        action=PlanAction.CREATE,
+        values=ResolvedSiteValues(
+            site_code="SAN",
+            name="Sandhagen",
+        ),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="plan_id already registered",
+    ):
+        create_metadata_item(
+            connection,
+            item,
+            context,
+        )
+
+    assert context.resolve(
+        PlannedRef(
+            resource_type="site",
+            plan_id="sites[0]",
+        )
+    ) == 17
+

@@ -51,7 +51,7 @@ def _create_site(
         ),
     ).fetchone()
 
-    database_id = row[0]
+    database_id = _returned_database_id(row)
 
     result = ApplyItemResult(
         plan_id=item.plan_id,
@@ -182,7 +182,7 @@ def _create_location_type(
         ),
     ).fetchone()
 
-    database_id = row[0]
+    database_id = _returned_database_id(row)
 
     result = ApplyItemResult(
         plan_id=item.plan_id,
@@ -226,7 +226,7 @@ def _create_sensor_type(
         ),
     ).fetchone()
 
-    database_id = row[0]
+    database_id = _returned_database_id(row)
 
     result = ApplyItemResult(
         plan_id=item.plan_id,
@@ -275,7 +275,7 @@ def _create_variable(
         ),
     ).fetchone()
 
-    database_id = row[0]
+    database_id = _returned_database_id(row)
 
     result = ApplyItemResult(
         plan_id=item.plan_id,
@@ -328,7 +328,7 @@ def _create_sensor_model(
         ),
     ).fetchone()
 
-    database_id = row[0]
+    database_id = _returned_database_id(row)
 
     result = ApplyItemResult(
         plan_id=item.plan_id,
@@ -380,7 +380,7 @@ def _create_sensor(
         ),
     ).fetchone()
 
-    database_id = row[0]
+    database_id = _returned_database_id(row)
 
     result = ApplyItemResult(
         plan_id=item.plan_id,
@@ -441,7 +441,7 @@ def _create_location(
         ),
     ).fetchone()
 
-    database_id = row[0]
+    database_id = _returned_database_id(row)
 
     result = ApplyItemResult(
         plan_id=item.plan_id,
@@ -496,7 +496,7 @@ def _create_location_label(
         ),
     ).fetchone()
 
-    database_id = row[0]
+    database_id = _returned_database_id(row)
 
     result = ApplyItemResult(
         plan_id=item.plan_id,
@@ -559,7 +559,7 @@ def _create_deployment(
         ),
     ).fetchone()
 
-    database_id = row[0]
+    database_id = _returned_database_id(row)
 
     result = ApplyItemResult(
         plan_id=item.plan_id,
@@ -575,4 +575,25 @@ def _create_deployment(
     )
 
     return result
+
+
+def _returned_database_id(row: object) -> int:
+    if row is None or len(row) < 1:
+        raise ValueError(
+            "missing returned database id"
+        )
+
+    database_id = row[0]
+
+    if not isinstance(database_id, int):
+        raise TypeError(
+            "returned database id must be an integer"
+        )
+
+    if database_id <= 0:
+        raise ValueError(
+            "database_id must be positive"
+        )
+
+    return database_id
 
