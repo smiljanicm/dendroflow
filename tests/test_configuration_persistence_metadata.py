@@ -1529,3 +1529,262 @@ def test_metadata_create_rejects_duplicate_plan_id_registration():
         )
     ) == 17
 
+
+def test_metadata_create_full_workflow():
+    connection = SequencedFakeConnection(
+        returned_ids=[
+            11,  # site
+            21,  # location_type
+            31,  # sensor_type
+            41,  # variable
+            51,  # sensor_model
+            61,  # sensor
+            71,  # location
+            81,  # location_label
+            91,  # deployment
+        ],
+    )
+    context = ApplyContext()
+
+    valid_from = datetime(
+        2026,
+        1,
+        1,
+        tzinfo=timezone.utc,
+    )
+
+    items = (
+        ResolvedPlanItem(
+            plan_id="sites[0]",
+            resource_type="site",
+            action=PlanAction.CREATE,
+            values=ResolvedSiteValues(
+                site_code="SAN",
+                name="Sandhagen",
+            ),
+        ),
+        ResolvedPlanItem(
+            plan_id="location_types[0]",
+            resource_type="location_type",
+            action=PlanAction.CREATE,
+            values=ResolvedLocationTypeValues(
+                type="plot",
+                description="Monitoring plot",
+            ),
+        ),
+        ResolvedPlanItem(
+            plan_id="sensor_types[0]",
+            resource_type="sensor_type",
+            action=PlanAction.CREATE,
+            values=ResolvedSensorTypeValues(
+                type="pressure transducer",
+                description="Water-level pressure sensor",
+            ),
+        ),
+        ResolvedPlanItem(
+            plan_id="variables[0]",
+            resource_type="variable",
+            action=PlanAction.CREATE,
+            values=ResolvedVariableValues(
+                variable="water_level",
+                derived=False,
+                description="Water-table level",
+            ),
+        ),
+        ResolvedPlanItem(
+            plan_id="sensor_models[0]",
+            resource_type="sensor_model",
+            action=PlanAction.CREATE,
+            values=ResolvedSensorModelValues(
+                model="CS451",
+                manufacturer="Campbell Scientific",
+                sensor_type=PlannedRef(
+                    resource_type="sensor_type",
+                    plan_id="sensor_types[0]",
+                ),
+            ),
+        ),
+        ResolvedPlanItem(
+            plan_id="sensors[0]",
+            resource_type="sensor",
+            action=PlanAction.CREATE,
+            values=ResolvedSensorValues(
+                sensor_model=PlannedRef(
+                    resource_type="sensor_model",
+                    plan_id="sensor_models[0]",
+                ),
+                serial_number="SN-001",
+                description="Main water-level sensor",
+            ),
+        ),
+        ResolvedPlanItem(
+            plan_id="locations[0]",
+            resource_type="location",
+            action=PlanAction.CREATE,
+            values=ResolvedLocationValues(
+                site=PlannedRef(
+                    resource_type="site",
+                    plan_id="sites[0]",
+                ),
+                location_type=PlannedRef(
+                    resource_type="location_type",
+                    plan_id="location_types[0]",
+                ),
+                latitude=54.123,
+                longitude=13.456,
+                height_above_ground=1.5,
+                azimuth=180.0,
+            ),
+        ),
+        ResolvedPlanItem(
+            plan_id="locations[0].initial_label",
+            resource_type="location_label",
+            action=PlanAction.CREATE,
+            values=ResolvedLocationLabelValues(
+                location=PlannedRef(
+                    resource_type="location",
+                    plan_id="locations[0]",
+                ),
+                label="Tree 12",
+                valid_from=valid_from,
+                valid_to=None,
+            ),
+        ),
+        ResolvedPlanItem(
+            plan_id="deployments[0]",
+            resource_type="deployment",
+            action=PlanAction.CREATE,
+            values=ResolvedDeploymentValues(
+                sensor=PlannedRef(
+                    resource_type="sensor",
+                    plan_id="sensors[0]",
+                ),
+                location=PlannedRef(
+                    resource_type="location",
+                    plan_id="locations[0]",
+                ),
+                variable=PlannedRef(
+                    resource_type="variable",
+                    plan_id="variables[0]",
+                ),
+                valid_from=valid_from,
+                valid_to=None,
+            ),
+        ),
+    )
+
+    results = tuple(
+        create_metadata_item(
+            connection,
+            item,
+            context,
+        )
+        for item in items
+    )
+
+    assert [
+        result.plan_id
+        for result in results
+    ] == [
+        "sites[0]",
+        "location_types[0]",
+        "sensor_types[0]",
+        "variables[0]",
+        "sensor_models[0]",
+        "sensors[0]",
+        "locations[0]",
+        "locations[0].initial_label",
+        "deployments[0]",
+    ]
+
+    assert [
+        result.database_id
+        for result in results
+    ] == [
+        11,
+        21,
+        31,
+        41,
+        51,
+        61,
+        71,
+        81,
+        91,
+    ]
+
+    assert context.resolve(
+        PlannedRef(
+            resource_type="site",
+            plan_id="sites[0]",
+        )
+    ) == 11
+
+    assert context.resolve(
+        PlannedRef(
+            resource_type="sensor_model",
+            plan_id="sensor_models[0]",
+        )
+    ) == 51
+
+    assert context.resolve(
+        PlannedRef(
+            resource_type="sensor",
+            plan_id="sensors[0]",
+        )
+    ) == 61
+
+    assert context.resolve(
+        PlannedRef(
+            resource_type="location",
+            plan_id="locations[0]",
+        )
+    ) == 71
+
+    assert context.resolve(
+        PlannedRef(
+            resource_type="deployment",
+            plan_id="deployments[0]",
+        )
+    ) == 91
+
+    _, sensor_model_params = connection.calls[4]
+    assert sensor_model_params == (
+        "CS451",
+        "Campbell Scientific",
+        31,
+    )
+
+    _, sensor_params = connection.calls[5]
+    assert sensor_params == (
+        51,
+        "SN-001",
+        "Main water-level sensor",
+    )
+
+    _, location_params = connection.calls[6]
+    assert location_params == (
+        11,
+        21,
+        54.123,
+        13.456,
+        1.5,
+        180.0,
+    )
+
+    _, label_params = connection.calls[7]
+    assert label_params == (
+        71,
+        "Tree 12",
+        valid_from,
+        None,
+    )
+
+    _, deployment_params = connection.calls[8]
+    assert deployment_params == (
+        61,
+        71,
+        41,
+        valid_from,
+        None,
+    )
+
