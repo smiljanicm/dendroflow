@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import pytest
 from pydantic import ValidationError
 
@@ -10,14 +12,20 @@ from dendroflow.configuration import (
     InitialLocationLabelConfig,
     InterfaceConfig,
     LocationConfig,
+    LocationTypeUpdateConfig,
+    LocationUpdateConfig,
     ReaderConfig,
     SensorConfig,
     SensorLookupConfig,
     SensorModelConfig,
+    SensorModelUpdateConfig,
+    SensorTypeUpdateConfig,
     SensorUpdateConfig,
     SiteConfig,
+    SiteUpdateConfig,
     TimestampConfig,
     VariableConfig,
+    VariableUpdateConfig,
 )
 
 
@@ -353,4 +361,234 @@ def test_sensor_lookup_accepts_sensor_model():
 
     assert lookup.serial_number == "123456"
     assert lookup.sensor_model == "cs451"
+
+
+def test_site_update_accepts_attribute_and_identity_changes():
+
+    update = SiteUpdateConfig(
+        update={
+            "site_code": "SANDHAGN",
+        },
+        set={
+            "site_code": "SANDHAGEN",
+            "name": "Sandhagen Experimental Site",
+            "description": "Corrected metadata",
+        },
+    )
+
+    assert update.update.site_code == "SANDHAGN"
+    assert update.set.site_code == "SANDHAGEN"
+    assert update.set.name == "Sandhagen Experimental Site"
+
+
+def test_location_type_update_accepts_type_and_description():
+    update = LocationTypeUpdateConfig(
+        update={
+            "type": "wel",
+        },
+        set={
+            "type": "well",
+            "description": "Monitoring well",
+        },
+    )
+
+    assert update.set.type == "well"
+
+
+def test_sensor_type_update_accepts_type_and_description():
+    update = SensorTypeUpdateConfig(
+        update={
+            "type": "pressure",
+        },
+        set={
+            "description": "Pressure transducer",
+        },
+    )
+
+    assert update.set.description == "Pressure transducer"
+
+
+def test_variable_update_accepts_identity_and_attributes():
+    update = VariableUpdateConfig(
+        update={
+            "variable": "water_levl",
+        },
+        set={
+            "variable": "water_level",
+            "derived": False,
+            "description": "Water-table level",
+        },
+    )
+
+    assert update.set.variable == "water_level"
+    assert update.set.derived is False
+
+
+def test_sensor_model_update_accepts_identity_and_sensor_type():
+    update = SensorModelUpdateConfig(
+        update={
+            "manufacturer": "Campbell Scientfic",
+            "model": "CS451",
+        },
+        set={
+            "manufacturer": "Campbell Scientific",
+            "sensor_type": "water_level",
+        },
+    )
+
+    assert update.set.manufacturer == "Campbell Scientific"
+    assert update.set.sensor_type == "water_level"
+
+
+def test_location_update_accepts_relationship_and_spatial_changes():
+    update = LocationUpdateConfig(
+        update={
+            "site": "sandhagen",
+            "initial_label": "tree_001",
+        },
+        set={
+            "location_type": "tree",
+            "latitude": 54.123,
+            "longitude": 13.456,
+            "height_above_ground": 1.3,
+            "azimuth": 180.0,
+        },
+    )
+
+    assert update.set.location_type == "tree"
+    assert update.set.latitude == 54.123
+    assert update.set.azimuth == 180.0
+
+
+def test_sensor_update_accepts_sensor_model_change():
+    update = SensorUpdateConfig(
+        update={
+            "serial_number": "SN001",
+        },
+        set={
+            "sensor_model": "corrected_model",
+        },
+    )
+
+    assert update.set.sensor_model == "corrected_model"
+
+
+def test_config_model_defaults_all_update_sections_to_empty():
+    config = ConfigModel()
+
+    assert config.updates.sites == []
+    assert config.updates.location_types == []
+    assert config.updates.sensor_types == []
+    assert config.updates.variables == []
+    assert config.updates.sensor_models == []
+    assert config.updates.sensors == []
+    assert config.updates.locations == []
+    assert config.updates.deployments == []
+
+
+def test_site_update_can_clear_nullable_description():
+    update = SiteUpdateConfig(
+        update={
+            "site_code": "SAN",
+        },
+        set={
+            "description": None,
+        },
+    )
+
+    assert "description" in update.set.model_fields_set
+    assert update.set.description is None
+
+
+def test_site_update_rejects_null_site_code():
+    with pytest.raises(ValidationError):
+        SiteUpdateConfig(
+            update={
+                "site_code": "SAN",
+            },
+            set={
+                "site_code": None,
+            },
+        )
+
+
+def test_location_update_rejects_null_site():
+    with pytest.raises(ValidationError):
+        LocationUpdateConfig(
+            update={
+                "site": "sandhagen",
+                "initial_label": "tree_001",
+            },
+            set={
+                "site": None,
+            },
+        )
+
+
+def test_location_update_accepts_single_coordinate_change():
+    update = LocationUpdateConfig(
+        update={
+            "site": "sandhagen",
+            "initial_label": "tree_001",
+        },
+        set={
+            "latitude": 54.123,
+        },
+    )
+
+    assert update.set.latitude == 54.123
+
+
+def test_location_update_rejects_invalid_latitude():
+    with pytest.raises(ValidationError):
+        LocationUpdateConfig(
+            update={
+                "site": "sandhagen",
+                "initial_label": "tree_001",
+            },
+            set={
+                "latitude": 100.0,
+            },
+        )
+
+
+def test_deployment_update_rejects_null_valid_from():
+    with pytest.raises(ValidationError):
+        DeploymentUpdateConfig(
+            update={
+                "sensor": "sensor_1",
+                "variable": "water_level",
+                "valid_from": datetime(
+                    2026,
+                    1,
+                    1,
+                    tzinfo = timezone.utc
+                ),
+            },
+            set={
+                "valid_from": None,
+            },
+        )
+
+
+def test_deployment_update_accepts_null_valid_to():
+    update = DeploymentUpdateConfig(
+        update={
+            "sensor": "sensor_1",
+            "variable": "water_level",
+            "valid_from": datetime(
+                2026,
+                1,
+                1,
+                tzinfo = timezone.utc
+            ),
+        },
+        set={
+            "valid_to": None,
+        },
+    )
+
+    assert "valid_to" in update.set.model_fields_set
+    assert update.set.valid_to is None
+
 

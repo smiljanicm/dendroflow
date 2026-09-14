@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, ClassVar, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
@@ -288,6 +288,8 @@ class ReferencesConfig(ConfigBaseModel):
 class UpdateFieldsConfig(ConfigBaseModel):
     """Base model for fields explicitly requested to change."""
 
+    non_nullable_fields: ClassVar[frozenset[str]] = frozenset()
+
     @model_validator(mode="after")
     def validate_set(self) -> "UpdateFieldsConfig":
         if not self.model_fields_set:
@@ -295,23 +297,174 @@ class UpdateFieldsConfig(ConfigBaseModel):
                 "set must contain at least one field"
             )
 
+        for field in self.non_nullable_fields:
+            if (
+                field in self.model_fields_set
+                and getattr(self, field) is None
+            ):
+                raise ValueError(
+                    f"{field} cannot be null"
+                )
+
         return self
 
 
-class SensorUpdateFieldsConfig(UpdateFieldsConfig):
-    serial_number: str | None = Field(
+class SiteUpdateFieldsConfig(UpdateFieldsConfig):
+    non_nullable_fields = frozenset(
+        {"site_code", "name"}
+    )
+
+    site_code: str | None = Field(
+        default=None,
+        min_length=1,
+    )
+    name: str | None = Field(
+        default=None,
+        min_length=1,
+    )
+    description: str | None = None
+    latitude: float | None = Field(
+        default=None,
+        ge=-90,
+        le=90,
+    )
+    longitude: float | None = Field(
+        default=None,
+        ge=-180,
+        le=180,
+    )
+
+
+class SiteUpdateConfig(ConfigBaseModel):
+    update: SiteLookupConfig
+    set: SiteUpdateFieldsConfig
+
+
+class LocationTypeUpdateFieldsConfig(UpdateFieldsConfig):
+    non_nullable_fields = frozenset({"type"})
+
+    type: str | None = Field(
         default=None,
         min_length=1,
     )
     description: str | None = None
 
 
-class SensorUpdateConfig(ConfigBaseModel):
-    update: SensorLookupConfig
-    set: SensorUpdateFieldsConfig
+class LocationTypeUpdateConfig(ConfigBaseModel):
+    update: LocationTypeLookupConfig
+    set: LocationTypeUpdateFieldsConfig
+
+
+class SensorTypeUpdateFieldsConfig(UpdateFieldsConfig):
+    non_nullable_fields = frozenset({"type"})
+
+    type: str | None = Field(
+        default=None,
+        min_length=1,
+    )
+    description: str | None = None
+
+
+class SensorTypeUpdateConfig(ConfigBaseModel):
+    update: SensorTypeLookupConfig
+    set: SensorTypeUpdateFieldsConfig
+
+
+class VariableUpdateFieldsConfig(UpdateFieldsConfig):
+    non_nullable_fields = frozenset(
+        {"variable", "derived"}
+    )
+
+    variable: str | None = Field(
+        default=None,
+        min_length=1,
+    )
+    derived: bool | None = None
+    description: str | None = None
+
+
+class VariableUpdateConfig(ConfigBaseModel):
+    update: VariableLookupConfig
+    set: VariableUpdateFieldsConfig
+
+
+class SensorModelUpdateFieldsConfig(UpdateFieldsConfig):
+    non_nullable_fields = frozenset(
+        {
+            "manufacturer",
+            "model",
+            "sensor_type",
+        }
+    )
+
+    manufacturer: str | None = Field(
+        default=None,
+        min_length=1,
+    )
+    model: str | None = Field(
+        default=None,
+        min_length=1,
+    )
+    sensor_type: str | None = Field(
+        default=None,
+        min_length=1,
+    )
+
+
+class SensorModelUpdateConfig(ConfigBaseModel):
+    update: SensorModelLookupConfig
+    set: SensorModelUpdateFieldsConfig
+
+
+class LocationUpdateFieldsConfig(UpdateFieldsConfig):
+    non_nullable_fields = frozenset(
+        {
+            "site",
+            "location_type",
+        }
+    )
+
+    site: str | None = Field(
+        default=None,
+        min_length=1,
+    )
+    location_type: str | None = Field(
+        default=None,
+        min_length=1,
+    )
+    latitude: float | None = Field(
+        default=None,
+        ge=-90,
+        le=90,
+    )
+    longitude: float | None = Field(
+        default=None,
+        ge=-180,
+        le=180,
+    )
+    height_above_ground: float | None = None
+    azimuth: float | None = Field(
+        default=None,
+        ge=0,
+        lt=360,
+    )
+
+
+class LocationUpdateConfig(ConfigBaseModel):
+    update: LocationLookupConfig
+    set: LocationUpdateFieldsConfig
 
 
 class DeploymentUpdateFieldsConfig(UpdateFieldsConfig):
+    non_nullable_fields = frozenset(
+        {
+            "sensor",
+            "location",
+            "variable",
+            "valid_from",
+        }
+    )
+
     sensor: str | None = Field(default=None, min_length=1)
     location: str | None = Field(default=None, min_length=1)
     variable: str | None = Field(default=None, min_length=1)
@@ -324,8 +477,50 @@ class DeploymentUpdateConfig(ConfigBaseModel):
     set: DeploymentUpdateFieldsConfig
 
 
+class SensorUpdateFieldsConfig(UpdateFieldsConfig):
+    non_nullable_fields = frozenset(
+        {
+            "serial_number",
+            "sensor_model",
+        }
+    )
+
+    serial_number: str | None = Field(
+        default=None,
+        min_length=1,
+    )
+    sensor_model: str | None = Field(
+        default=None,
+        min_length=1,
+    )
+    description: str | None = None
+
+
+class SensorUpdateConfig(ConfigBaseModel):
+    update: SensorLookupConfig
+    set: SensorUpdateFieldsConfig
+
+
 class UpdatesConfig(ConfigBaseModel):
-    sensors: list[SensorUpdateConfig] = Field(default_factory=list)
+    sites: list[SiteUpdateConfig] = Field(default_factory=list)
+    location_types: list[LocationTypeUpdateConfig] = Field(
+        default_factory=list
+    )
+    sensor_types: list[SensorTypeUpdateConfig] = Field(
+        default_factory=list
+    )
+    variables: list[VariableUpdateConfig] = Field(
+        default_factory=list
+    )
+    sensor_models: list[SensorModelUpdateConfig] = Field(
+        default_factory=list
+    )
+    sensors: list[SensorUpdateConfig] = Field(
+        default_factory=list
+    )
+    locations: list[LocationUpdateConfig] = Field(
+        default_factory=list
+    )
     deployments: list[DeploymentUpdateConfig] = Field(
         default_factory=list
     )
@@ -351,4 +546,3 @@ class ConfigModel(ConfigBaseModel):
     updates: UpdatesConfig = Field(
         default_factory=UpdatesConfig
     )
-
