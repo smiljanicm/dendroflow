@@ -2,7 +2,11 @@ from .. import metadata
 from ..metadata import MetadataRow
 from ..models import (
     DeploymentLookupConfig,
+    LocationTypeLookupConfig,
     SensorLookupConfig,
+    SensorTypeLookupConfig,
+    SiteLookupConfig,
+    VariableLookupConfig,
 )
 from ..plan import (
     PlanBinding,
@@ -184,5 +188,93 @@ def resolve_deployment_selector(
         )
 
     return rows[0], ()
+
+
+def resolve_site_selector(
+    selector: SiteLookupConfig,
+    *,
+    source_path: str,
+) -> tuple[MetadataRow | None, tuple[PlanError, ...]]:
+    """Resolve a site selector to one existing site."""
+
+    row = metadata.find_site(selector.site_code)
+
+    if row is None:
+        return None, (
+            PlanError(
+                code=PlanErrorCode.NOT_FOUND,
+                resource_type="site",
+                source_path=source_path,
+                message="site resource not found",
+            ),
+        )
+
+    return row, ()
+
+
+def resolve_location_type_selector(
+    selector: LocationTypeLookupConfig,
+    *,
+    source_path: str,
+) -> tuple[MetadataRow | None, tuple[PlanError, ...]]:
+    """Resolve a location-type selector to one existing resource."""
+
+    row = metadata.find_location_type(selector.type)
+
+    if row is None:
+        return None, (
+            PlanError(
+                code=PlanErrorCode.NOT_FOUND,
+                resource_type="location_type",
+                source_path=source_path,
+                message="location type resource not found",
+            ),
+        )
+
+    return row, ()
+
+
+def resolve_sensor_type_selector(
+    selector: SensorTypeLookupConfig,
+    *,
+    source_path: str,
+) -> tuple[MetadataRow | None, tuple[PlanError, ...]]:
+    """Resolve a sensor-type selector to one existing resource."""
+
+    row = metadata.find_sensor_type(selector.type)
+
+    if row is None:
+        return None, (
+            PlanError(
+                code=PlanErrorCode.NOT_FOUND,
+                resource_type="sensor_type",
+                source_path=source_path,
+                message="sensor type resource not found",
+            ),
+        )
+
+    return row, ()
+
+
+def resolve_variable_selector(
+    selector: VariableLookupConfig,
+    *,
+    source_path: str,
+) -> tuple[MetadataRow | None, tuple[PlanError, ...]]:
+    """Resolve a variable selector to one existing variable."""
+
+    row = metadata.find_variable(selector.variable)
+
+    if row is None:
+        return None, (
+            PlanError(
+                code=PlanErrorCode.NOT_FOUND,
+                resource_type="variable",
+                source_path=source_path,
+                message="variable resource not found",
+            ),
+        )
+
+    return row, ()
 
 

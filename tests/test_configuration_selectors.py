@@ -5,6 +5,7 @@ from dendroflow.configuration.metadata import MetadataRow
 from dendroflow.configuration.models import (
     DeploymentLookupConfig,
     SensorLookupConfig,
+    SiteLookupConfig,
 )
 from dendroflow.configuration.plan import (
     PlanBinding,
@@ -14,6 +15,7 @@ from dendroflow.configuration.plan import (
 from dendroflow.configuration.resolution.selectors import (
     resolve_deployment_selector,
     resolve_sensor_selector,
+    resolve_site_selector,
 )
 
 
@@ -283,4 +285,66 @@ def test_deployment_selector_planned_relationship_is_invalid(
     assert error.source_path == (
         "updates.deployments[0].update.sensor"
     )
+
+
+def test_site_selector_resolves_unique_match(
+    monkeypatch,
+):
+    selector = SiteLookupConfig(
+        site_code="SAN",
+    )
+
+    row = MetadataRow(
+        database_id=11,
+        values={
+            "site_code": "SAN",
+            "name": "Sandhagen",
+            "description": None,
+            "latitude": None,
+            "longitude": None,
+            "parent_id": None,
+        },
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_site",
+        lambda site_code: row,
+    )
+
+    result, errors = resolve_site_selector(
+        selector,
+        source_path="updates.sites[0].update",
+    )
+
+    assert errors == ()
+    assert result == row
+
+
+def test_site_selector_reports_not_found(
+    monkeypatch,
+):
+    selector = SiteLookupConfig(
+        site_code="missing",
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_site",
+        lambda site_code: None,
+    )
+
+    row, errors = resolve_site_selector(
+        selector,
+        source_path="updates.sites[0].update",
+    )
+
+    assert row is None
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.NOT_FOUND
+    assert errors[0].resource_type == "site"
+    assert errors[0].source_path == (
+        "updates.sites[0].update"
+    )
+
 
