@@ -14,6 +14,7 @@ from dendroflow.configuration.plan import (
 from dendroflow.configuration.resolution.updates import (
     resolve_deployment_updates,
     resolve_location_type_updates,
+    resolve_location_updates,
     resolve_sensor_model_updates,
     resolve_sensor_type_updates,
     resolve_sensor_updates,
@@ -215,6 +216,48 @@ def _sensor_type_row(
         values={
             "type": type_,
             "description": description,
+        },
+    )
+
+
+def _location_update_config(
+    set_values: dict[str, object],
+) -> ConfigModel:
+    return ConfigModel(
+        updates={
+            "locations": [
+                {
+                    "update": {
+                        "initial_label": "tree_001",
+                    },
+                    "set": set_values,
+                }
+            ]
+        }
+    )
+
+
+def _location_row(
+    *,
+    site_id=11,
+    location_type_id=21,
+    latitude=54.10,
+    longitude=13.40,
+    height_above_ground=1.30,
+    azimuth=180.0,
+) -> MetadataRow:
+    return MetadataRow(
+        database_id=71,
+        values={
+            "site_id": site_id,
+            "location_type_id": location_type_id,
+            "latitude": latitude,
+            "longitude": longitude,
+            "height_above_ground": height_above_ground,
+            "azimuth": azimuth,
+            "initial_label": "tree_001",
+            "initial_label_valid_from": None,
+            "initial_label_valid_to": None,
         },
     )
 
@@ -1873,4 +1916,351 @@ def test_sensor_model_update_with_no_actual_change_is_noop(
     assert items == ()
     assert errors == ()
 
+
+def test_location_height_change_becomes_update(
+    monkeypatch,
+):
+    config = _location_update_config(
+        {
+            "height_above_ground": 1.50,
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_locations",
+        lambda **kwargs: (_location_row(),),
+    )
+
+    items, errors = resolve_location_updates(config)
+
+    assert errors == ()
+    assert len(items) == 1
+
+    item = items[0]
+
+    assert item.plan_id == "updates.locations[0]"
+    assert item.resource_type == "location"
+    assert item.action == PlanAction.UPDATE
+    assert item.database_id == 71
+
+    assert item.changes == (
+        FieldChange(
+            field="height_above_ground",
+            before=1.30,
+            after=1.50,
+            identity_change=False,
+        ),
+    )
+
+    assert item.values.site == ExistingRef(
+        resource_type="site",
+        database_id=11,
+    )
+    assert item.values.location_type == ExistingRef(
+        resource_type="location_type",
+        database_id=21,
+    )
+    assert item.values.height_above_ground == 1.50
+    assert item.requires_confirmation is False
+
+
+def test_location_site_change_is_identity_change(
+    monkeypatch,
+):
+    config = _location_update_config(
+        {
+            "site": "new_site",
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_locations",
+        lambda **kwargs: (_location_row(),),
+    )
+
+    new_site = ExistingRef(
+        resource_type="site",
+        database_id=12,
+    )
+
+    bindings = (
+        PlanBinding(
+            resource_type="sites",
+            alias="new_site",
+            resource=new_site,
+        ),
+    )
+
+    items, errors = resolve_location_updates(
+        config,
+        existing_bindings=bindings,
+    )
+
+    assert errors == ()
+    assert len(items) == 1
+
+    change = items[0].changes[0]
+
+    assert change.field == "site"
+    assert change.before == ExistingRef(
+        resource_type="site",
+        database_id=11,
+    )
+    assert change.after == new_site
+    assert change.identity_change is True
+
+    assert items[0].values.site == new_site
+    assert items[0].requires_confirmation is True
+
+
+def test_location_type_change_is_not_identity_change(
+    monkeypatch,
+):
+    config = _location_update_config(
+        {
+            "location_type": "stem",
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_locations",
+        lambda **kwargs: (_location_row(),),
+    )
+
+    new_type = ExistingRef(
+        resource_type="location_type",
+        database_id=22,
+    )
+
+    bindings = (
+        PlanBinding(
+            resource_type="location_types",
+            alias="stem",
+            resource=new_type,
+        ),
+    )
+
+    items, errors = resolve_location_updates(
+        config,
+        existing_bindings=bindings,
+    )
+
+    assert errors == ()
+    assert len(items) == 1
+
+    change = items[0].changes[0]
+
+    assert change.field == "location_type"
+    assert change.before == ExistingRef(
+        resource_type="location_type",
+        database_id=21,
+    )
+    assert change.after == new_type
+    assert change.identity_change is False
+    assert items[0].requires_confirmation is False
+
+
+def test_location_site_can_use_planned_ref(
+    monkeypatch,
+):
+    config = _location_update_config(
+        {
+            "site": "future_site",
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_locations",
+        lambda **kwargs: (_location_row(),),
+    )
+
+    planned = PlannedRef(
+        resource_type="site",
+        plan_id="sites[0]",
+    )
+
+    bindings = (
+        PlanBinding(
+            resource_type="sites",
+            alias="future_site",
+            resource=planned,
+        ),
+    )
+
+    items, errors = resolve_location_updates(
+        config,
+        existing_bindings=bindings,
+    )
+
+    assert errors == ()
+    assert items[0].changes[0].after == planned
+    assert items[0].changes[0].identity_change is True
+    assert items[0].values.site == planned
+
+
+def test_location_update_reports_invalid_site_reference(
+    monkeypatch,
+):
+    config = _location_update_config(
+        {
+            "site": "missing_site",
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_locations",
+        lambda **kwargs: (_location_row(),),
+    )
+
+    items, errors = resolve_location_updates(
+        config,
+        existing_bindings=(),
+    )
+
+    assert items == ()
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.INVALID_REFERENCE
+    assert errors[0].resource_type == "location"
+    assert errors[0].source_path == (
+        "updates.locations[0].set.site"
+    )
+
+
+def test_location_update_with_no_actual_change_is_noop(
+    monkeypatch,
+):
+    config = _location_update_config(
+        {
+            "azimuth": 180.0,
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_locations",
+        lambda **kwargs: (_location_row(),),
+    )
+
+    items, errors = resolve_location_updates(config)
+
+    assert items == ()
+    assert errors == ()
+
+
+def test_location_update_accepts_single_coordinate_correction(
+    monkeypatch,
+):
+    config = _location_update_config(
+        {
+            "latitude": 54.20,
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_locations",
+        lambda **kwargs: (
+            _location_row(
+                latitude=54.10,
+                longitude=13.40,
+            ),
+        ),
+    )
+
+    items, errors = resolve_location_updates(config)
+
+    assert errors == ()
+    assert len(items) == 1
+    assert items[0].values.latitude == 54.20
+    assert items[0].values.longitude == 13.40
+
+
+def test_location_update_rejects_final_coordinate_mismatch(
+    monkeypatch,
+):
+    config = _location_update_config(
+        {
+            "latitude": None,
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_locations",
+        lambda **kwargs: (
+            _location_row(
+                latitude=54.10,
+                longitude=13.40,
+            ),
+        ),
+    )
+
+    items, errors = resolve_location_updates(config)
+
+    assert items == ()
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+    assert errors[0].resource_type == "location"
+    assert errors[0].source_path == "updates.locations[0].set"
+
+
+def test_location_update_rejects_setting_only_one_missing_coordinate(
+    monkeypatch,
+):
+    config = _location_update_config(
+        {
+            "latitude": 54.20,
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_locations",
+        lambda **kwargs: (
+            _location_row(
+                latitude=None,
+                longitude=None,
+            ),
+        ),
+    )
+
+    items, errors = resolve_location_updates(config)
+
+    assert items == ()
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+
+
+def test_location_update_can_clear_both_coordinates(
+    monkeypatch,
+):
+    config = _location_update_config(
+        {
+            "latitude": None,
+            "longitude": None,
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_locations",
+        lambda **kwargs: (
+            _location_row(
+                latitude=54.10,
+                longitude=13.40,
+            ),
+        ),
+    )
+
+    items, errors = resolve_location_updates(config)
+
+    assert errors == ()
+    assert len(items) == 1
+    assert items[0].values.latitude is None
+    assert items[0].values.longitude is None
 

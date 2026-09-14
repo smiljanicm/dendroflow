@@ -8,6 +8,7 @@ from ..plan import (
     PlanErrorCode,
     ResolvedDeploymentValues,
     ResolvedLocationTypeValues,
+    ResolvedLocationValues,
     ResolvedPlanItem,
     ResolvedSensorModelValues,
     ResolvedSensorTypeValues,
@@ -19,6 +20,7 @@ from ..plan import (
 from .common import _find_binding
 from .selectors import (
     resolve_deployment_selector,
+    resolve_location_selector,
     resolve_location_type_selector,
     resolve_sensor_model_selector,
     resolve_sensor_selector,
@@ -904,6 +906,211 @@ def resolve_sensor_model_updates(
                     model=model,
                     manufacturer=manufacturer,
                     sensor_type=sensor_type,
+                ),
+                changes=tuple(changes),
+                source_path=source_path,
+            )
+        )
+
+    return tuple(items), tuple(errors)
+
+
+def resolve_location_updates(
+    config: ConfigModel,
+    existing_bindings: tuple[PlanBinding, ...] = (),
+) -> tuple[
+    tuple[ResolvedPlanItem, ...],
+    tuple[PlanError, ...],
+]:
+    """Resolve explicit location updates."""
+
+    items: list[ResolvedPlanItem] = []
+    errors: list[PlanError] = []
+
+    for index, update_config in enumerate(
+        config.updates.locations
+    ):
+        source_path = f"updates.locations[{index}]"
+
+        row, selector_errors = resolve_location_selector(
+            update_config.update,
+            source_path=f"{source_path}.update",
+            existing_bindings=existing_bindings,
+        )
+
+        if selector_errors:
+            errors.extend(selector_errors)
+            continue
+
+        assert row is not None
+
+        site: ResourceRef = ExistingRef(
+            resource_type="site",
+            database_id=row.values["site_id"],
+        )
+        location_type: ResourceRef = ExistingRef(
+            resource_type="location_type",
+            database_id=row.values["location_type_id"],
+        )
+
+        latitude = row.values["latitude"]
+        longitude = row.values["longitude"]
+        height_above_ground = row.values[
+            "height_above_ground"
+        ]
+        azimuth = row.values["azimuth"]
+
+        changes: list[FieldChange] = []
+        update_errors: list[PlanError] = []
+
+        fields_set = update_config.set.model_fields_set
+
+        relationship_fields = (
+            (
+                "site",
+                "sites",
+                site,
+                True,
+            ),
+            (
+                "location_type",
+                "location_types",
+                location_type,
+                False,
+            ),
+        )
+
+        resolved_relationships: dict[
+            str, ResourceRef
+        ] = {
+            "site": site,
+            "location_type": location_type,
+        }
+
+        for (
+            field,
+            binding_type,
+            existing_resource,
+            identity_change,
+        ) in relationship_fields:
+            if field not in fields_set:
+                continue
+
+            alias = getattr(update_config.set, field)
+
+            if alias is None:
+                update_errors.append(
+                    PlanError(
+                        code=PlanErrorCode.INVALID_REFERENCE,
+                        resource_type="location",
+                        source_path=(
+                            f"{source_path}.set.{field}"
+                        ),
+                        message=f"{field} cannot be null",
+                    )
+                )
+                continue
+
+            requested, error = _resolve_set_relationship(
+                alias=alias,
+                owner_resource_type="location",
+                relationship_type=field,
+                binding_type=binding_type,
+                source_path=f"{source_path}.set.{field}",
+                existing_bindings=existing_bindings,
+            )
+
+            if error is not None:
+                update_errors.append(error)
+                continue
+
+            assert requested is not None
+
+            resolved_relationships[field] = requested
+
+            if requested != existing_resource:
+                changes.append(
+                    FieldChange(
+                        field=field,
+                        before=existing_resource,
+                        after=requested,
+                        identity_change=identity_change,
+                    )
+                )
+
+        scalar_fields = (
+            "latitude",
+            "longitude",
+            "height_above_ground",
+            "azimuth",
+        )
+
+        scalar_values = {
+            "latitude": latitude,
+            "longitude": longitude,
+            "height_above_ground": height_above_ground,
+            "azimuth": azimuth,
+        }
+
+        for field in scalar_fields:
+            if field not in fields_set:
+                continue
+
+            requested = getattr(update_config.set, field)
+            current = scalar_values[field]
+
+            if requested != current:
+                changes.append(
+                    FieldChange(
+                        field=field,
+                        before=current,
+                        after=requested,
+                        identity_change=False,
+                    )
+                )
+                scalar_values[field] = requested
+
+        if update_errors:
+            errors.extend(update_errors)
+            continue
+
+        if not changes:
+            continue
+
+        latitude = scalar_values["latitude"]
+        longitude = scalar_values["longitude"]
+
+        if (latitude is None) != (longitude is None):
+            errors.append(
+                PlanError(
+                    code=PlanErrorCode.CONFLICT,
+                    resource_type="location",
+                    source_path=f"{source_path}.set",
+                    message=(
+                        "location latitude and longitude must "
+                        "either both be set or both be null"
+                    ),
+                )
+            )
+            continue
+
+        items.append(
+            ResolvedPlanItem(
+                plan_id=source_path,
+                resource_type="location",
+                action=PlanAction.UPDATE,
+                database_id=row.database_id,
+                values=ResolvedLocationValues(
+                    site=resolved_relationships["site"],
+                    location_type=resolved_relationships[
+                        "location_type"
+                    ],
+                    latitude=latitude,
+                    longitude=longitude,
+                    height_above_ground=scalar_values[
+                        "height_above_ground"
+                    ],
+                    azimuth=scalar_values["azimuth"],
                 ),
                 changes=tuple(changes),
                 source_path=source_path,
