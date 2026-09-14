@@ -5,6 +5,7 @@ from dendroflow.configuration.metadata import MetadataRow
 from dendroflow.configuration.models import ConfigModel
 from dendroflow.configuration.plan import (
     ExistingRef,
+    FieldChange,
     PlanAction,
     PlanBinding,
     PlanErrorCode,
@@ -12,8 +13,11 @@ from dendroflow.configuration.plan import (
 )
 from dendroflow.configuration.resolution.updates import (
     resolve_deployment_updates,
+    resolve_location_type_updates,
+    resolve_sensor_type_updates,
     resolve_sensor_updates,
     resolve_site_updates,
+    resolve_variable_updates,
 )
 
 
@@ -84,6 +88,132 @@ def _site_row(
             "latitude": latitude,
             "longitude": longitude,
             "parent_id": parent_id,
+        },
+    )
+
+
+def _location_type_update_config(
+    set_values: dict[str, object],
+) -> ConfigModel:
+    return ConfigModel(
+        updates={
+            "location_types": [
+                {
+                    "update": {
+                        "type": "plot",
+                    },
+                    "set": set_values,
+                }
+            ]
+        }
+    )
+
+
+def _location_type_row(
+    *,
+    type_="plot",
+    description="Old description",
+) -> MetadataRow:
+    return MetadataRow(
+        database_id=21,
+        values={
+            "type": type_,
+            "description": description,
+        },
+    )
+
+
+def _sensor_type_update_config(
+    set_values: dict[str, object],
+) -> ConfigModel:
+    return ConfigModel(
+        updates={
+            "sensor_types": [
+                {
+                    "update": {
+                        "type": "pressure",
+                    },
+                    "set": set_values,
+                }
+            ]
+        }
+    )
+
+
+def _sensor_type_row(
+    *,
+    type_="pressure",
+    description="Old description",
+) -> MetadataRow:
+    return MetadataRow(
+        database_id=31,
+        values={
+            "type": type_,
+            "description": description,
+        },
+    )
+
+
+def _variable_update_config(
+    set_values: dict[str, object],
+) -> ConfigModel:
+    return ConfigModel(
+        updates={
+            "variables": [
+                {
+                    "update": {
+                        "variable": "water_level",
+                    },
+                    "set": set_values,
+                }
+            ]
+        }
+    )
+
+
+def _variable_row(
+    *,
+    variable="water_level",
+    derived=False,
+    description="Old description",
+) -> MetadataRow:
+    return MetadataRow(
+        database_id=41,
+        values={
+            "variable": variable,
+            "derived": derived,
+            "description": description,
+        },
+    )
+
+
+def _sensor_type_update_config(
+    set_values: dict[str, object],
+) -> ConfigModel:
+    return ConfigModel(
+        updates={
+            "sensor_types": [
+                {
+                    "update": {
+                        "type": "pressure",
+                    },
+                    "set": set_values,
+                }
+            ]
+        }
+    )
+
+
+def _sensor_type_row(
+    *,
+    type_="pressure",
+    description="Old description",
+) -> MetadataRow:
+    return MetadataRow(
+        database_id=31,
+        values={
+            "type": type_,
+            "description": description,
         },
     )
 
@@ -1155,4 +1285,340 @@ def test_site_update_can_clear_both_coordinates(
     assert items[0].values.latitude is None
     assert items[0].values.longitude is None
 
+
+def test_location_type_description_change_becomes_update(
+    monkeypatch,
+):
+    config = _location_type_update_config(
+        {"description": "Monitoring plot"}
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_location_type",
+        lambda type_: _location_type_row(),
+    )
+
+    items, errors = resolve_location_type_updates(config)
+
+    assert errors == ()
+    assert len(items) == 1
+
+    item = items[0]
+    assert item.resource_type == "location_type"
+    assert item.database_id == 21
+    assert item.changes == (
+        FieldChange(
+            field="description",
+            before="Old description",
+            after="Monitoring plot",
+            identity_change=False,
+        ),
+    )
+
+
+def test_location_type_type_change_is_identity_change(
+    monkeypatch,
+):
+    config = _location_type_update_config(
+        {"type": "monitoring_plot"}
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_location_type",
+        lambda type_: _location_type_row(),
+    )
+
+    items, errors = resolve_location_type_updates(config)
+
+    assert errors == ()
+    assert items[0].changes[0].identity_change is True
+    assert items[0].values.type == "monitoring_plot"
+    assert items[0].requires_confirmation is True
+
+
+def test_location_type_update_with_no_actual_change_is_noop(
+    monkeypatch,
+):
+    config = _location_type_update_config(
+        {"description": "Old description"}
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_location_type",
+        lambda type_: _location_type_row(),
+    )
+
+    items, errors = resolve_location_type_updates(config)
+
+    assert items == ()
+    assert errors == ()
+
+
+def test_location_type_update_propagates_not_found(
+    monkeypatch,
+):
+    config = _location_type_update_config(
+        {"description": "New"}
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_location_type",
+        lambda type_: None,
+    )
+
+    items, errors = resolve_location_type_updates(config)
+
+    assert items == ()
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.NOT_FOUND
+
+
+def test_variable_description_change_becomes_update(monkeypatch):
+    config = _variable_update_config(
+        {"description": "Water-table level"}
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_variable",
+        lambda variable: _variable_row(),
+    )
+
+    items, errors = resolve_variable_updates(config)
+
+    assert errors == ()
+    assert len(items) == 1
+    assert items[0].changes[0].field == "description"
+    assert items[0].changes[0].identity_change is False
+
+
+def test_variable_name_change_is_identity_change(monkeypatch):
+    config = _variable_update_config(
+        {"variable": "water_table_level"}
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_variable",
+        lambda variable: _variable_row(),
+    )
+
+    items, errors = resolve_variable_updates(config)
+
+    assert errors == ()
+    assert items[0].changes[0].field == "variable"
+    assert items[0].changes[0].identity_change is True
+    assert items[0].requires_confirmation is True
+
+
+def test_variable_update_can_change_derived(monkeypatch):
+    config = _variable_update_config(
+        {"derived": True}
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_variable",
+        lambda variable: _variable_row(
+            derived=False,
+        ),
+    )
+
+    items, errors = resolve_variable_updates(config)
+
+    assert errors == ()
+    assert items[0].values.derived is True
+
+
+def test_variable_update_can_clear_description(monkeypatch):
+    config = _variable_update_config(
+        {"description": None}
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_variable",
+        lambda variable: _variable_row(),
+    )
+
+    items, errors = resolve_variable_updates(config)
+
+    assert errors == ()
+    assert items[0].values.description is None
+
+
+def test_variable_update_with_no_actual_change_is_noop(
+    monkeypatch,
+):
+    config = _variable_update_config(
+        {"derived": False}
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_variable",
+        lambda variable: _variable_row(
+            derived=False,
+        ),
+    )
+
+    items, errors = resolve_variable_updates(config)
+
+    assert items == ()
+    assert errors == ()
+
+
+def test_sensor_type_description_change_becomes_update(
+    monkeypatch,
+):
+    config = _sensor_type_update_config(
+        {
+            "description": "Pressure transducer",
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_sensor_type",
+        lambda type_: _sensor_type_row(),
+    )
+
+    items, errors = resolve_sensor_type_updates(config)
+
+    assert errors == ()
+    assert len(items) == 1
+
+    item = items[0]
+
+    assert item.plan_id == "updates.sensor_types[0]"
+    assert item.resource_type == "sensor_type"
+    assert item.action == PlanAction.UPDATE
+    assert item.database_id == 31
+
+    assert item.changes == (
+        FieldChange(
+            field="description",
+            before="Old description",
+            after="Pressure transducer",
+            identity_change=False,
+        ),
+    )
+
+    assert item.values.type == "pressure"
+    assert item.values.description == "Pressure transducer"
+    assert item.requires_confirmation is False
+
+
+def test_sensor_type_type_change_is_identity_change(
+    monkeypatch,
+):
+    config = _sensor_type_update_config(
+        {
+            "type": "pressure_transducer",
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_sensor_type",
+        lambda type_: _sensor_type_row(),
+    )
+
+    items, errors = resolve_sensor_type_updates(config)
+
+    assert errors == ()
+    assert len(items) == 1
+
+    item = items[0]
+    change = item.changes[0]
+
+    assert change.field == "type"
+    assert change.before == "pressure"
+    assert change.after == "pressure_transducer"
+    assert change.identity_change is True
+
+    assert item.values.type == "pressure_transducer"
+    assert item.values.description == "Old description"
+    assert item.requires_confirmation is True
+
+
+def test_sensor_type_update_with_no_actual_change_is_noop(
+    monkeypatch,
+):
+    config = _sensor_type_update_config(
+        {
+            "description": "Old description",
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_sensor_type",
+        lambda type_: _sensor_type_row(),
+    )
+
+    items, errors = resolve_sensor_type_updates(config)
+
+    assert items == ()
+    assert errors == ()
+
+
+def test_sensor_type_update_can_clear_description(
+    monkeypatch,
+):
+    config = _sensor_type_update_config(
+        {
+            "description": None,
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_sensor_type",
+        lambda type_: _sensor_type_row(),
+    )
+
+    items, errors = resolve_sensor_type_updates(config)
+
+    assert errors == ()
+    assert len(items) == 1
+
+    change = items[0].changes[0]
+
+    assert change.field == "description"
+    assert change.before == "Old description"
+    assert change.after is None
+    assert change.identity_change is False
+
+    assert items[0].values.description is None
+
+
+def test_sensor_type_update_propagates_not_found(
+    monkeypatch,
+):
+    config = _sensor_type_update_config(
+        {
+            "description": "Pressure transducer",
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_sensor_type",
+        lambda type_: None,
+    )
+
+    items, errors = resolve_sensor_type_updates(config)
+
+    assert items == ()
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.NOT_FOUND
+    assert errors[0].resource_type == "sensor_type"
+    assert errors[0].source_path == (
+        "updates.sensor_types[0].update"
+    )
 

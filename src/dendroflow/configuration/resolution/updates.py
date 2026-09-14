@@ -7,16 +7,22 @@ from ..plan import (
     PlanError,
     PlanErrorCode,
     ResolvedDeploymentValues,
+    ResolvedLocationTypeValues,
     ResolvedPlanItem,
+    ResolvedSensorTypeValues,
     ResolvedSensorValues,
     ResolvedSiteValues,
+    ResolvedVariableValues,
     ResourceRef,
 )
 from .common import _find_binding
 from .selectors import (
     resolve_deployment_selector,
+    resolve_location_type_selector,
     resolve_sensor_selector,
+    resolve_sensor_type_selector,
     resolve_site_selector,
+    resolve_variable_selector,
 )
 
 
@@ -510,4 +516,265 @@ def resolve_site_updates(
 
     return tuple(items), tuple(errors)
 
+
+def resolve_location_type_updates(
+    config: ConfigModel,
+) -> tuple[
+    tuple[ResolvedPlanItem, ...],
+    tuple[PlanError, ...],
+]:
+    """Resolve explicit location-type updates."""
+
+    items: list[ResolvedPlanItem] = []
+    errors: list[PlanError] = []
+
+    for index, update_config in enumerate(
+        config.updates.location_types
+    ):
+        source_path = f"updates.location_types[{index}]"
+
+        row, selector_errors = resolve_location_type_selector(
+            update_config.update,
+            source_path=f"{source_path}.update",
+        )
+
+        if selector_errors:
+            errors.extend(selector_errors)
+            continue
+
+        assert row is not None
+
+        type_ = row.values["type"]
+        description = row.values["description"]
+
+        changes: list[FieldChange] = []
+        fields_set = update_config.set.model_fields_set
+
+        if "type" in fields_set:
+            requested = update_config.set.type
+
+            if requested != type_:
+                changes.append(
+                    FieldChange(
+                        field="type",
+                        before=type_,
+                        after=requested,
+                        identity_change=True,
+                    )
+                )
+                type_ = requested
+
+        if "description" in fields_set:
+            requested = update_config.set.description
+
+            if requested != description:
+                changes.append(
+                    FieldChange(
+                        field="description",
+                        before=description,
+                        after=requested,
+                        identity_change=False,
+                    )
+                )
+                description = requested
+
+        if not changes:
+            continue
+
+        items.append(
+            ResolvedPlanItem(
+                plan_id=source_path,
+                resource_type="location_type",
+                action=PlanAction.UPDATE,
+                database_id=row.database_id,
+                values=ResolvedLocationTypeValues(
+                    type=type_,
+                    description=description,
+                ),
+                changes=tuple(changes),
+                source_path=source_path,
+            )
+        )
+
+    return tuple(items), tuple(errors)
+
+
+def resolve_sensor_type_updates(
+    config: ConfigModel,
+) -> tuple[
+    tuple[ResolvedPlanItem, ...],
+    tuple[PlanError, ...],
+]:
+    """Resolve explicit sensor-type updates."""
+
+    items: list[ResolvedPlanItem] = []
+    errors: list[PlanError] = []
+
+    for index, update_config in enumerate(
+        config.updates.sensor_types
+    ):
+        source_path = f"updates.sensor_types[{index}]"
+
+        row, selector_errors = resolve_sensor_type_selector(
+            update_config.update,
+            source_path=f"{source_path}.update",
+        )
+
+        if selector_errors:
+            errors.extend(selector_errors)
+            continue
+
+        assert row is not None
+
+        type_ = row.values["type"]
+        description = row.values["description"]
+
+        changes: list[FieldChange] = []
+        fields_set = update_config.set.model_fields_set
+
+        if "type" in fields_set:
+            requested = update_config.set.type
+
+            if requested != type_:
+                changes.append(
+                    FieldChange(
+                        field="type",
+                        before=type_,
+                        after=requested,
+                        identity_change=True,
+                    )
+                )
+                type_ = requested
+
+        if "description" in fields_set:
+            requested = update_config.set.description
+
+            if requested != description:
+                changes.append(
+                    FieldChange(
+                        field="description",
+                        before=description,
+                        after=requested,
+                        identity_change=False,
+                    )
+                )
+                description = requested
+
+        if not changes:
+            continue
+
+        items.append(
+            ResolvedPlanItem(
+                plan_id=source_path,
+                resource_type="sensor_type",
+                action=PlanAction.UPDATE,
+                database_id=row.database_id,
+                values=ResolvedSensorTypeValues(
+                    type=type_,
+                    description=description,
+                ),
+                changes=tuple(changes),
+                source_path=source_path,
+            )
+        )
+
+    return tuple(items), tuple(errors)
+
+
+def resolve_variable_updates(
+    config: ConfigModel,
+) -> tuple[
+    tuple[ResolvedPlanItem, ...],
+    tuple[PlanError, ...],
+]:
+    """Resolve explicit variable updates."""
+
+    items: list[ResolvedPlanItem] = []
+    errors: list[PlanError] = []
+
+    for index, update_config in enumerate(
+        config.updates.variables
+    ):
+        source_path = f"updates.variables[{index}]"
+
+        row, selector_errors = resolve_variable_selector(
+            update_config.update,
+            source_path=f"{source_path}.update",
+        )
+
+        if selector_errors:
+            errors.extend(selector_errors)
+            continue
+
+        assert row is not None
+
+        variable = row.values["variable"]
+        derived = row.values["derived"]
+        description = row.values["description"]
+
+        changes: list[FieldChange] = []
+        fields_set = update_config.set.model_fields_set
+
+        if "variable" in fields_set:
+            requested = update_config.set.variable
+
+            if requested != variable:
+                changes.append(
+                    FieldChange(
+                        field="variable",
+                        before=variable,
+                        after=requested,
+                        identity_change=True,
+                    )
+                )
+                variable = requested
+
+        if "derived" in fields_set:
+            requested = update_config.set.derived
+
+            if requested != derived:
+                changes.append(
+                    FieldChange(
+                        field="derived",
+                        before=derived,
+                        after=requested,
+                        identity_change=False,
+                    )
+                )
+                derived = requested
+
+        if "description" in fields_set:
+            requested = update_config.set.description
+
+            if requested != description:
+                changes.append(
+                    FieldChange(
+                        field="description",
+                        before=description,
+                        after=requested,
+                        identity_change=False,
+                    )
+                )
+                description = requested
+
+        if not changes:
+            continue
+
+        items.append(
+            ResolvedPlanItem(
+                plan_id=source_path,
+                resource_type="variable",
+                action=PlanAction.UPDATE,
+                database_id=row.database_id,
+                values=ResolvedVariableValues(
+                    variable=variable,
+                    derived=derived,
+                    description=description,
+                ),
+                changes=tuple(changes),
+                source_path=source_path,
+            )
+        )
+
+    return tuple(items), tuple(errors)
 
