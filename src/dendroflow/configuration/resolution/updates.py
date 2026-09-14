@@ -9,6 +9,7 @@ from ..plan import (
     ResolvedDeploymentValues,
     ResolvedLocationTypeValues,
     ResolvedPlanItem,
+    ResolvedSensorModelValues,
     ResolvedSensorTypeValues,
     ResolvedSensorValues,
     ResolvedSiteValues,
@@ -19,6 +20,7 @@ from .common import _find_binding
 from .selectors import (
     resolve_deployment_selector,
     resolve_location_type_selector,
+    resolve_sensor_model_selector,
     resolve_sensor_selector,
     resolve_sensor_type_selector,
     resolve_site_selector,
@@ -127,7 +129,8 @@ def resolve_sensor_updates(
 def _resolve_set_relationship(
     *,
     alias: str,
-    resource_type: str,
+    owner_resource_type: str,
+    relationship_type: str,
     binding_type: str,
     source_path: str,
     existing_bindings: tuple[PlanBinding, ...],
@@ -141,10 +144,10 @@ def _resolve_set_relationship(
     if binding is None:
         return None, PlanError(
             code=PlanErrorCode.INVALID_REFERENCE,
-            resource_type="deployment",
+            resource_type=owner_resource_type,
             source_path=source_path,
             message=(
-                f"unable to resolve {resource_type} "
+                f"unable to resolve {relationship_type} "
                 f"{alias!r}"
             ),
         )
@@ -259,18 +262,13 @@ def resolve_deployment_updates(
                 )
                 continue
 
-            requested, error = (
-                _resolve_set_relationship(
-                    alias=alias,
-                    resource_type=field,
-                    binding_type=binding_type,
-                    source_path=(
-                        f"{source_path}.set.{field}"
-                    ),
-                    existing_bindings=(
-                        existing_bindings
-                    ),
-                )
+            requested, error = _resolve_set_relationship(
+                alias=alias,
+                owner_resource_type="deployment",
+                relationship_type=field,
+                binding_type=binding_type,
+                source_path=f"{source_path}.set.{field}",
+                existing_bindings=existing_bindings,
             )
 
             if error is not None:
@@ -770,6 +768,142 @@ def resolve_variable_updates(
                     variable=variable,
                     derived=derived,
                     description=description,
+                ),
+                changes=tuple(changes),
+                source_path=source_path,
+            )
+        )
+
+    return tuple(items), tuple(errors)
+
+
+def resolve_sensor_model_updates(
+    config: ConfigModel,
+    existing_bindings: tuple[PlanBinding, ...] = (),
+) -> tuple[
+    tuple[ResolvedPlanItem, ...],
+    tuple[PlanError, ...],
+]:
+    """Resolve explicit sensor-model updates."""
+
+    items: list[ResolvedPlanItem] = []
+    errors: list[PlanError] = []
+
+    for index, update_config in enumerate(
+        config.updates.sensor_models
+    ):
+        source_path = f"updates.sensor_models[{index}]"
+
+        row, selector_errors = resolve_sensor_model_selector(
+            update_config.update,
+            source_path=f"{source_path}.update",
+        )
+
+        if selector_errors:
+            errors.extend(selector_errors)
+            continue
+
+        assert row is not None
+
+        manufacturer = row.values["manufacturer"]
+        model = row.values["model"]
+
+        sensor_type: ResourceRef = ExistingRef(
+            resource_type="sensor_type",
+            database_id=row.values["sensor_type_id"],
+        )
+
+        changes: list[FieldChange] = []
+        update_errors: list[PlanError] = []
+        fields_set = update_config.set.model_fields_set
+
+        if "manufacturer" in fields_set:
+            requested = update_config.set.manufacturer
+
+            if requested != manufacturer:
+                changes.append(
+                    FieldChange(
+                        field="manufacturer",
+                        before=manufacturer,
+                        after=requested,
+                        identity_change=True,
+                    )
+                )
+                manufacturer = requested
+
+        if "model" in fields_set:
+            requested = update_config.set.model
+
+            if requested != model:
+                changes.append(
+                    FieldChange(
+                        field="model",
+                        before=model,
+                        after=requested,
+                        identity_change=True,
+                    )
+                )
+                model = requested
+
+        if "sensor_type" in fields_set:
+            alias = update_config.set.sensor_type
+
+            if alias is None:
+                update_errors.append(
+                    PlanError(
+                        code=PlanErrorCode.INVALID_REFERENCE,
+                        resource_type="sensor_model",
+                        source_path=(
+                            f"{source_path}.set.sensor_type"
+                        ),
+                        message="sensor_type cannot be null",
+                    )
+                )
+            else:
+                requested, error = _resolve_set_relationship(
+                    alias=alias,
+                    owner_resource_type="sensor_model",
+                    relationship_type="sensor_type",
+                    binding_type="sensor_types",
+                    source_path=(
+                        f"{source_path}.set.sensor_type"
+                    ),
+                    existing_bindings=existing_bindings,
+                )
+
+                if error is not None:
+                    update_errors.append(error)
+                else:
+                    assert requested is not None
+
+                    if requested != sensor_type:
+                        changes.append(
+                            FieldChange(
+                                field="sensor_type",
+                                before=sensor_type,
+                                after=requested,
+                                identity_change=False,
+                            )
+                        )
+                        sensor_type = requested
+
+        if update_errors:
+            errors.extend(update_errors)
+            continue
+
+        if not changes:
+            continue
+
+        items.append(
+            ResolvedPlanItem(
+                plan_id=source_path,
+                resource_type="sensor_model",
+                action=PlanAction.UPDATE,
+                database_id=row.database_id,
+                values=ResolvedSensorModelValues(
+                    model=model,
+                    manufacturer=manufacturer,
+                    sensor_type=sensor_type,
                 ),
                 changes=tuple(changes),
                 source_path=source_path,

@@ -14,6 +14,7 @@ from dendroflow.configuration.plan import (
 from dendroflow.configuration.resolution.updates import (
     resolve_deployment_updates,
     resolve_location_type_updates,
+    resolve_sensor_model_updates,
     resolve_sensor_type_updates,
     resolve_sensor_updates,
     resolve_site_updates,
@@ -214,6 +215,40 @@ def _sensor_type_row(
         values={
             "type": type_,
             "description": description,
+        },
+    )
+
+
+def _sensor_model_update_config(
+    set_values: dict[str, object],
+) -> ConfigModel:
+    return ConfigModel(
+        updates={
+            "sensor_models": [
+                {
+                    "update": {
+                        "manufacturer": "Campbell Scientific",
+                        "model": "CS451",
+                    },
+                    "set": set_values,
+                }
+            ]
+        }
+    )
+
+
+def _sensor_model_row(
+    *,
+    manufacturer="Campbell Scientific",
+    model="CS451",
+    sensor_type_id=31,
+) -> MetadataRow:
+    return MetadataRow(
+        database_id=51,
+        values={
+            "manufacturer": manufacturer,
+            "model": model,
+            "sensor_type_id": sensor_type_id,
         },
     )
 
@@ -1621,4 +1656,221 @@ def test_sensor_type_update_propagates_not_found(
     assert errors[0].source_path == (
         "updates.sensor_types[0].update"
     )
+
+
+def test_sensor_model_manufacturer_change_is_identity_change(
+    monkeypatch,
+):
+    config = _sensor_model_update_config(
+        {
+            "manufacturer": "Campbell Scientific Inc.",
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_sensor_models",
+        lambda **kwargs: (_sensor_model_row(),),
+    )
+
+    items, errors = resolve_sensor_model_updates(config)
+
+    assert errors == ()
+    assert len(items) == 1
+
+    item = items[0]
+
+    assert item.plan_id == "updates.sensor_models[0]"
+    assert item.resource_type == "sensor_model"
+    assert item.action == PlanAction.UPDATE
+    assert item.database_id == 51
+
+    assert item.changes == (
+        FieldChange(
+            field="manufacturer",
+            before="Campbell Scientific",
+            after="Campbell Scientific Inc.",
+            identity_change=True,
+        ),
+    )
+
+    assert item.values.manufacturer == "Campbell Scientific Inc."
+    assert item.values.model == "CS451"
+    assert item.values.sensor_type == ExistingRef(
+        resource_type="sensor_type",
+        database_id=31,
+    )
+    assert item.requires_confirmation is True
+
+
+def test_sensor_model_model_change_is_identity_change(
+    monkeypatch,
+):
+    config = _sensor_model_update_config(
+        {
+            "model": "CS451-L",
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_sensor_models",
+        lambda **kwargs: (_sensor_model_row(),),
+    )
+
+    items, errors = resolve_sensor_model_updates(config)
+
+    assert errors == ()
+    assert len(items) == 1
+
+    change = items[0].changes[0]
+
+    assert change.field == "model"
+    assert change.before == "CS451"
+    assert change.after == "CS451-L"
+    assert change.identity_change is True
+
+
+def test_sensor_model_sensor_type_change_is_not_identity_change(
+    monkeypatch,
+):
+    config = _sensor_model_update_config(
+        {
+            "sensor_type": "water_pressure",
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_sensor_models",
+        lambda **kwargs: (_sensor_model_row(),),
+    )
+
+    bindings = (
+        PlanBinding(
+            resource_type="sensor_types",
+            alias="water_pressure",
+            resource=ExistingRef(
+                resource_type="sensor_type",
+                database_id=32,
+            ),
+        ),
+    )
+
+    items, errors = resolve_sensor_model_updates(
+        config,
+        existing_bindings=bindings,
+    )
+
+    assert errors == ()
+    assert len(items) == 1
+
+    change = items[0].changes[0]
+
+    assert change.field == "sensor_type"
+    assert change.before == ExistingRef(
+        resource_type="sensor_type",
+        database_id=31,
+    )
+    assert change.after == ExistingRef(
+        resource_type="sensor_type",
+        database_id=32,
+    )
+    assert change.identity_change is False
+
+    assert items[0].values.sensor_type == ExistingRef(
+        resource_type="sensor_type",
+        database_id=32,
+    )
+    assert items[0].requires_confirmation is False
+
+
+def test_sensor_model_sensor_type_can_use_planned_ref(
+    monkeypatch,
+):
+    config = _sensor_model_update_config(
+        {
+            "sensor_type": "new_pressure_type",
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_sensor_models",
+        lambda **kwargs: (_sensor_model_row(),),
+    )
+
+    planned = PlannedRef(
+        resource_type="sensor_type",
+        plan_id="sensor_types[0]",
+    )
+
+    bindings = (
+        PlanBinding(
+            resource_type="sensor_types",
+            alias="new_pressure_type",
+            resource=planned,
+        ),
+    )
+
+    items, errors = resolve_sensor_model_updates(
+        config,
+        existing_bindings=bindings,
+    )
+
+    assert errors == ()
+    assert len(items) == 1
+    assert items[0].changes[0].after == planned
+    assert items[0].values.sensor_type == planned
+
+
+def test_sensor_model_update_reports_invalid_sensor_type_reference(
+    monkeypatch,
+):
+    config = _sensor_model_update_config(
+        {
+            "sensor_type": "missing_type",
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_sensor_models",
+        lambda **kwargs: (_sensor_model_row(),),
+    )
+
+    items, errors = resolve_sensor_model_updates(
+        config,
+        existing_bindings=(),
+    )
+
+    assert items == ()
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.INVALID_REFERENCE
+    assert errors[0].resource_type == "sensor_model"
+    assert errors[0].source_path == (
+        "updates.sensor_models[0].set.sensor_type"
+    )
+
+
+def test_sensor_model_update_with_no_actual_change_is_noop(
+    monkeypatch,
+):
+    config = _sensor_model_update_config(
+        {
+            "manufacturer": "Campbell Scientific",
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_sensor_models",
+        lambda **kwargs: (_sensor_model_row(),),
+    )
+
+    items, errors = resolve_sensor_model_updates(config)
+
+    assert items == ()
+    assert errors == ()
+
 
