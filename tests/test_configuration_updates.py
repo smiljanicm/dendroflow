@@ -42,13 +42,14 @@ def _sensor_update_config(
 
 def _sensor_row(
     *,
+    sensor_model_id=3,
     serial_number="OLD123",
     description="Old description",
 ) -> MetadataRow:
     return MetadataRow(
         database_id=17,
         values={
-            "sensor_model_id": 3,
+            "sensor_model_id": sensor_model_id,
             "serial_number": serial_number,
             "description": description,
         },
@@ -2263,4 +2264,166 @@ def test_location_update_can_clear_both_coordinates(
     assert len(items) == 1
     assert items[0].values.latitude is None
     assert items[0].values.longitude is None
+
+
+def test_sensor_model_change_is_identity_change(
+    monkeypatch,
+):
+    config = _sensor_update_config(
+        {
+            "sensor_model": "replacement_model",
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_sensors",
+        lambda **kwargs: (_sensor_row(),),
+    )
+
+    replacement = ExistingRef(
+        resource_type="sensor_model",
+        database_id=4,
+    )
+
+    bindings = (
+        PlanBinding(
+            resource_type="sensor_models",
+            alias="replacement_model",
+            resource=replacement,
+        ),
+    )
+
+    items, errors = resolve_sensor_updates(
+        config,
+        existing_bindings=bindings,
+    )
+
+    assert errors == ()
+    assert len(items) == 1
+
+    item = items[0]
+    change = item.changes[0]
+
+    assert change.field == "sensor_model"
+    assert change.before == ExistingRef(
+        resource_type="sensor_model",
+        database_id=3,
+    )
+    assert change.after == replacement
+    assert change.identity_change is True
+
+    assert item.values.sensor_model == replacement
+    assert item.requires_confirmation is True
+
+
+def test_sensor_model_change_can_use_planned_ref(
+    monkeypatch,
+):
+    config = _sensor_update_config(
+        {
+            "sensor_model": "new_model",
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_sensors",
+        lambda **kwargs: (_sensor_row(),),
+    )
+
+    planned = PlannedRef(
+        resource_type="sensor_model",
+        plan_id="sensor_models[0]",
+    )
+
+    bindings = (
+        PlanBinding(
+            resource_type="sensor_models",
+            alias="new_model",
+            resource=planned,
+        ),
+    )
+
+    items, errors = resolve_sensor_updates(
+        config,
+        existing_bindings=bindings,
+    )
+
+    assert errors == ()
+    assert len(items) == 1
+
+    change = items[0].changes[0]
+
+    assert change.before == ExistingRef(
+        resource_type="sensor_model",
+        database_id=3,
+    )
+    assert change.after == planned
+    assert change.identity_change is True
+    assert items[0].values.sensor_model == planned
+
+
+def test_sensor_model_change_missing_binding_is_invalid(
+    monkeypatch,
+):
+    config = _sensor_update_config(
+        {
+            "sensor_model": "missing_model",
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_sensors",
+        lambda **kwargs: (_sensor_row(),),
+    )
+
+    items, errors = resolve_sensor_updates(
+        config,
+        existing_bindings=(),
+    )
+
+    assert items == ()
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.INVALID_REFERENCE
+    assert errors[0].resource_type == "sensor"
+    assert errors[0].source_path == (
+        "updates.sensors[0].set.sensor_model"
+    )
+
+
+def test_sensor_model_change_to_current_model_is_noop(
+    monkeypatch,
+):
+    config = _sensor_update_config(
+        {
+            "sensor_model": "current_model",
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_sensors",
+        lambda **kwargs: (_sensor_row(),),
+    )
+
+    bindings = (
+        PlanBinding(
+            resource_type="sensor_models",
+            alias="current_model",
+            resource=ExistingRef(
+                resource_type="sensor_model",
+                database_id=3,
+            ),
+        ),
+    )
+
+    items, errors = resolve_sensor_updates(
+        config,
+        existing_bindings=bindings,
+    )
+
+    assert items == ()
+    assert errors == ()
 

@@ -59,12 +59,59 @@ def resolve_sensor_updates(
 
         assert row is not None
 
-        changes: list[FieldChange] = []
-
+        sensor_model: ResourceRef = ExistingRef(
+            resource_type="sensor_model",
+            database_id=row.values["sensor_model_id"],
+        )
         serial_number = row.values["serial_number"]
         description = row.values["description"]
 
+        changes: list[FieldChange] = []
+        update_errors: list[PlanError] = []
+
         fields_set = update_config.set.model_fields_set
+
+        if "sensor_model" in fields_set:
+            alias = update_config.set.sensor_model
+
+            if alias is None:
+                update_errors.append(
+                    PlanError(
+                        code=PlanErrorCode.INVALID_REFERENCE,
+                        resource_type="sensor",
+                        source_path=(
+                            f"{source_path}.set.sensor_model"
+                        ),
+                        message="sensor_model cannot be null",
+                    )
+                )
+            else:
+                requested, error = _resolve_set_relationship(
+                    alias=alias,
+                    owner_resource_type="sensor",
+                    relationship_type="sensor_model",
+                    binding_type="sensor_models",
+                    source_path=(
+                        f"{source_path}.set.sensor_model"
+                    ),
+                    existing_bindings=existing_bindings,
+                )
+
+                if error is not None:
+                    update_errors.append(error)
+                else:
+                    assert requested is not None
+
+                    if requested != sensor_model:
+                        changes.append(
+                            FieldChange(
+                                field="sensor_model",
+                                before=sensor_model,
+                                after=requested,
+                                identity_change=True,
+                            )
+                        )
+                        sensor_model = requested
 
         if "serial_number" in fields_set:
             requested_serial_number = (
@@ -98,10 +145,12 @@ def resolve_sensor_updates(
                 )
                 description = requested_description
 
-        if not changes:
+        if update_errors:
+            errors.extend(update_errors)
             continue
 
-        sensor_model_id = row.values["sensor_model_id"]
+        if not changes:
+            continue
 
         items.append(
             ResolvedPlanItem(
@@ -111,10 +160,7 @@ def resolve_sensor_updates(
                 database_id=row.database_id,
                 values=ResolvedSensorValues(
                     serial_number=serial_number,
-                    sensor_model=ExistingRef(
-                        resource_type="sensor_model",
-                        database_id=sensor_model_id,
-                    ),
+                    sensor_model=sensor_model,
                     description=description,
                 ),
                 changes=tuple(changes),
