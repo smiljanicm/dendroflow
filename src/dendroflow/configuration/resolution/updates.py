@@ -9,12 +9,14 @@ from ..plan import (
     ResolvedDeploymentValues,
     ResolvedPlanItem,
     ResolvedSensorValues,
+    ResolvedSiteValues,
     ResourceRef,
 )
 from .common import _find_binding
 from .selectors import (
     resolve_deployment_selector,
     resolve_sensor_selector,
+    resolve_site_selector,
 )
 
 
@@ -349,4 +351,163 @@ def resolve_deployment_updates(
         )
 
     return tuple(items), tuple(errors)
+
+
+# Site Updates
+
+
+def resolve_site_updates(
+    config: ConfigModel,
+) -> tuple[
+    tuple[ResolvedPlanItem, ...],
+    tuple[PlanError, ...],
+]:
+    """Resolve explicit site updates."""
+
+    items: list[ResolvedPlanItem] = []
+    errors: list[PlanError] = []
+
+    for index, update_config in enumerate(
+        config.updates.sites
+    ):
+        source_path = f"updates.sites[{index}]"
+
+        row, selector_errors = resolve_site_selector(
+            update_config.update,
+            source_path=f"{source_path}.update",
+        )
+
+        if selector_errors:
+            errors.extend(selector_errors)
+            continue
+
+        assert row is not None
+
+        site_code = row.values["site_code"]
+        name = row.values["name"]
+        description = row.values["description"]
+        latitude = row.values["latitude"]
+        longitude = row.values["longitude"]
+        parent_id = row.values["parent_id"]
+
+        changes: list[FieldChange] = []
+        fields_set = update_config.set.model_fields_set
+
+        if "site_code" in fields_set:
+            requested = update_config.set.site_code
+
+            if requested != site_code:
+                changes.append(
+                    FieldChange(
+                        field="site_code",
+                        before=site_code,
+                        after=requested,
+                        identity_change=True,
+                    )
+                )
+                site_code = requested
+
+        if "name" in fields_set:
+            requested = update_config.set.name
+
+            if requested != name:
+                changes.append(
+                    FieldChange(
+                        field="name",
+                        before=name,
+                        after=requested,
+                        identity_change=False,
+                    )
+                )
+                name = requested
+
+        if "description" in fields_set:
+            requested = update_config.set.description
+
+            if requested != description:
+                changes.append(
+                    FieldChange(
+                        field="description",
+                        before=description,
+                        after=requested,
+                        identity_change=False,
+                    )
+                )
+                description = requested
+
+        if "latitude" in fields_set:
+            requested = update_config.set.latitude
+
+            if requested != latitude:
+                changes.append(
+                    FieldChange(
+                        field="latitude",
+                        before=latitude,
+                        after=requested,
+                        identity_change=False,
+                    )
+                )
+                latitude = requested
+
+        if "longitude" in fields_set:
+            requested = update_config.set.longitude
+
+            if requested != longitude:
+                changes.append(
+                    FieldChange(
+                        field="longitude",
+                        before=longitude,
+                        after=requested,
+                        identity_change=False,
+                    )
+                )
+                longitude = requested
+
+        if not changes:
+            continue
+
+        parent = (
+            None
+            if parent_id is None
+            else ExistingRef(
+                resource_type="site",
+                database_id=parent_id,
+            )
+        )
+
+        if (latitude is None) != (longitude is None):
+            errors.append(
+                PlanError(
+                    code=PlanErrorCode.CONFLICT,
+                    resource_type="site",
+                    source_path=f"{source_path}.set",
+                    message=(
+                        "site latitude and longitude must either "
+                        "both be set or both be null"
+                    ),
+                )
+            )
+            continue
+
+        items.append(
+            ResolvedPlanItem(
+                plan_id=source_path,
+                resource_type="site",
+                action=PlanAction.UPDATE,
+                database_id=row.database_id,
+                values=ResolvedSiteValues(
+                    site_code=site_code,
+                    name=name,
+                    description=description,
+                    latitude=latitude,
+                    longitude=longitude,
+                    parent=parent,
+                ),
+                changes=tuple(changes),
+                source_path=source_path,
+            )
+        )
+
+    return tuple(items), tuple(errors)
+
 

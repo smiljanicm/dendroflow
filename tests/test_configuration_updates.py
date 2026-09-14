@@ -13,6 +13,7 @@ from dendroflow.configuration.plan import (
 from dendroflow.configuration.resolution.updates import (
     resolve_deployment_updates,
     resolve_sensor_updates,
+    resolve_site_updates,
 )
 
 
@@ -44,6 +45,45 @@ def _sensor_row(
             "sensor_model_id": 3,
             "serial_number": serial_number,
             "description": description,
+        },
+    )
+
+
+def _site_update_config(
+    set_values: dict[str, object],
+) -> ConfigModel:
+    return ConfigModel(
+        updates={
+            "sites": [
+                {
+                    "update": {
+                        "site_code": "SAN",
+                    },
+                    "set": set_values,
+                }
+            ]
+        }
+    )
+
+
+def _site_row(
+    *,
+    site_code="SAN",
+    name="Sandhagen",
+    description="Old description",
+    latitude=54.10,
+    longitude=13.40,
+    parent_id=5,
+) -> MetadataRow:
+    return MetadataRow(
+        database_id=11,
+        values={
+            "site_code": site_code,
+            "name": name,
+            "description": description,
+            "latitude": latitude,
+            "longitude": longitude,
+            "parent_id": parent_id,
         },
     )
 
@@ -855,4 +895,264 @@ def test_mixed_deployment_update_requires_confirmation(
         False,
     ]
     assert item.requires_confirmation is True
+
+
+def test_site_description_change_becomes_update(
+    monkeypatch,
+):
+    config = _site_update_config(
+        {
+            "description": "New description",
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_site",
+        lambda site_code: _site_row(),
+    )
+
+    items, errors = resolve_site_updates(config)
+
+    assert errors == ()
+    assert len(items) == 1
+
+    item = items[0]
+
+    assert item.plan_id == "updates.sites[0]"
+    assert item.resource_type == "site"
+    assert item.action == PlanAction.UPDATE
+    assert item.database_id == 11
+
+    assert len(item.changes) == 1
+
+    change = item.changes[0]
+    assert change.field == "description"
+    assert change.before == "Old description"
+    assert change.after == "New description"
+    assert change.identity_change is False
+
+    assert item.values.site_code == "SAN"
+    assert item.values.name == "Sandhagen"
+    assert item.values.description == "New description"
+    assert item.values.latitude == 54.10
+    assert item.values.longitude == 13.40
+    assert item.values.parent == ExistingRef(
+        resource_type="site",
+        database_id=5,
+    )
+
+
+def test_site_code_change_is_identity_change(
+    monkeypatch,
+):
+    config = _site_update_config(
+        {
+            "site_code": "SANDHAGEN",
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_site",
+        lambda site_code: _site_row(),
+    )
+
+    items, errors = resolve_site_updates(config)
+
+    assert errors == ()
+    assert len(items) == 1
+
+    change = items[0].changes[0]
+
+    assert change.field == "site_code"
+    assert change.before == "SAN"
+    assert change.after == "SANDHAGEN"
+    assert change.identity_change is True
+
+    assert items[0].requires_confirmation is True
+    assert items[0].values.site_code == "SANDHAGEN"
+
+
+def test_site_update_with_no_actual_change_is_noop(
+    monkeypatch,
+):
+    config = _site_update_config(
+        {
+            "name": "Sandhagen",
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_site",
+        lambda site_code: _site_row(),
+    )
+
+    items, errors = resolve_site_updates(config)
+
+    assert items == ()
+    assert errors == ()
+
+
+def test_site_update_can_clear_description(
+    monkeypatch,
+):
+    config = _site_update_config(
+        {
+            "description": None,
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_site",
+        lambda site_code: _site_row(),
+    )
+
+    items, errors = resolve_site_updates(config)
+
+    assert errors == ()
+    assert len(items) == 1
+
+    change = items[0].changes[0]
+
+    assert change.field == "description"
+    assert change.before == "Old description"
+    assert change.after is None
+    assert change.identity_change is False
+
+    assert items[0].values.description is None
+
+
+def test_site_update_propagates_not_found(
+    monkeypatch,
+):
+    config = _site_update_config(
+        {
+            "description": "New description",
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_site",
+        lambda site_code: None,
+    )
+
+    items, errors = resolve_site_updates(config)
+
+    assert items == ()
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.NOT_FOUND
+    assert errors[0].resource_type == "site"
+    assert errors[0].source_path == (
+        "updates.sites[0].update"
+    )
+
+
+def test_site_update_accepts_single_coordinate_correction(
+    monkeypatch,
+):
+    config = _site_update_config(
+        {
+            "latitude": 54.20,
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_site",
+        lambda site_code: _site_row(
+            latitude=54.10,
+            longitude=13.40,
+        ),
+    )
+
+    items, errors = resolve_site_updates(config)
+
+    assert errors == ()
+    assert len(items) == 1
+    assert items[0].values.latitude == 54.20
+    assert items[0].values.longitude == 13.40
+
+
+def test_site_update_rejects_final_coordinate_mismatch(
+    monkeypatch,
+):
+    config = _site_update_config(
+        {
+            "latitude": None,
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_site",
+        lambda site_code: _site_row(
+            latitude=54.10,
+            longitude=13.40,
+        ),
+    )
+
+    items, errors = resolve_site_updates(config)
+
+    assert items == ()
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+    assert errors[0].resource_type == "site"
+    assert errors[0].source_path == "updates.sites[0].set"
+
+
+def test_site_update_rejects_setting_only_one_missing_coordinate(
+    monkeypatch,
+):
+    config = _site_update_config(
+        {
+            "latitude": 54.20,
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_site",
+        lambda site_code: _site_row(
+            latitude=None,
+            longitude=None,
+        ),
+    )
+
+    items, errors = resolve_site_updates(config)
+
+    assert items == ()
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+
+
+def test_site_update_can_clear_both_coordinates(
+    monkeypatch,
+):
+    config = _site_update_config(
+        {
+            "latitude": None,
+            "longitude": None,
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_site",
+        lambda site_code: _site_row(
+            latitude=54.10,
+            longitude=13.40,
+        ),
+    )
+
+    items, errors = resolve_site_updates(config)
+
+    assert errors == ()
+    assert len(items) == 1
+    assert items[0].values.latitude is None
+    assert items[0].values.longitude is None
+
 
