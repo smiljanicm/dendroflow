@@ -2,8 +2,10 @@ from .. import metadata
 from ..metadata import MetadataRow
 from ..models import (
     DeploymentLookupConfig,
+    LocationLookupConfig,
     LocationTypeLookupConfig,
     SensorLookupConfig,
+    SensorModelLookupConfig,
     SensorTypeLookupConfig,
     SiteLookupConfig,
     VariableLookupConfig,
@@ -277,4 +279,123 @@ def resolve_variable_selector(
 
     return row, ()
 
+
+def resolve_sensor_model_selector(
+    selector: SensorModelLookupConfig,
+    *,
+    source_path: str,
+) -> tuple[MetadataRow | None, tuple[PlanError, ...]]:
+    """Resolve a sensor-model selector to exactly one existing resource."""
+
+    rows = metadata.find_sensor_models(
+        manufacturer=selector.manufacturer,
+        model=selector.model,
+    )
+
+    if not rows:
+        return None, (
+            PlanError(
+                code=PlanErrorCode.NOT_FOUND,
+                resource_type="sensor_model",
+                source_path=source_path,
+                message="sensor model resource not found",
+            ),
+        )
+
+    if len(rows) > 1:
+        return None, (
+            PlanError(
+                code=PlanErrorCode.AMBIGUOUS,
+                resource_type="sensor_model",
+                source_path=source_path,
+                message=(
+                    "sensor model selector matched "
+                    "multiple resources"
+                ),
+                candidate_ids=tuple(
+                    row.database_id for row in rows
+                ),
+            ),
+        )
+
+    return rows[0], ()
+
+
+def resolve_location_selector(
+    selector: LocationLookupConfig,
+    *,
+    source_path: str,
+    existing_bindings: tuple[PlanBinding, ...] = (),
+) -> tuple[MetadataRow | None, tuple[PlanError, ...]]:
+    """Resolve a location selector to exactly one existing location."""
+
+    site_id: int | None = None
+
+    if selector.site is not None:
+        binding = _find_binding(
+            existing_bindings,
+            "sites",
+            selector.site,
+        )
+
+        if binding is None:
+            return None, (
+                PlanError(
+                    code=PlanErrorCode.INVALID_REFERENCE,
+                    resource_type="location",
+                    source_path=f"{source_path}.site",
+                    message=(
+                        "unable to resolve site "
+                        f"{selector.site!r}"
+                    ),
+                ),
+            )
+
+        if isinstance(binding.resource, PlannedRef):
+            return None, (
+                PlanError(
+                    code=PlanErrorCode.INVALID_REFERENCE,
+                    resource_type="location",
+                    source_path=f"{source_path}.site",
+                    message=(
+                        "existing location selector cannot use "
+                        "a site planned for creation"
+                    ),
+                ),
+            )
+
+        site_id = binding.resource.database_id
+
+    rows = metadata.find_locations(
+        site_id=site_id,
+        initial_label=selector.initial_label,
+    )
+
+    if not rows:
+        return None, (
+            PlanError(
+                code=PlanErrorCode.NOT_FOUND,
+                resource_type="location",
+                source_path=source_path,
+                message="location resource not found",
+            ),
+        )
+
+    if len(rows) > 1:
+        return None, (
+            PlanError(
+                code=PlanErrorCode.AMBIGUOUS,
+                resource_type="location",
+                source_path=source_path,
+                message=(
+                    "location selector matched "
+                    "multiple resources"
+                ),
+                candidate_ids=tuple(
+                    row.database_id for row in rows
+                ),
+            ),
+        )
+
+    return rows[0], ()
 
