@@ -10,6 +10,7 @@ from dendroflow.configuration.plan import (
     ResolvedFileValues,
     ResolvedInterfaceValues,
     ResolvedLocationTypeValues,
+    ResolvedLocationValues,
     ResolvedPlan,
     ResolvedPlanItem,
     ResolvedSensorModelValues,
@@ -1901,4 +1902,355 @@ def test_sensor_model_identity_ignores_sensor_type():
     assert len(errors) == 1
     assert errors[0].code == PlanErrorCode.CONFLICT
     assert errors[0].resource_type == "sensor_model"
+
+
+def test_sensor_update_releases_reused_old_identity():
+    reused = ResolvedPlanItem(
+        plan_id="sensors[0]",
+        resource_type="sensor",
+        action=PlanAction.REUSE,
+        database_id=17,
+        values=ResolvedSensorValues(
+            sensor_model=ExistingRef(
+                resource_type="sensor_model",
+                database_id=3,
+            ),
+            serial_number="OLD123",
+            description=None,
+        ),
+        source_path="sensors[0]",
+    )
+
+    updated = ResolvedPlanItem(
+        plan_id="updates.sensors[0]",
+        resource_type="sensor",
+        action=PlanAction.UPDATE,
+        database_id=17,
+        values=ResolvedSensorValues(
+            sensor_model=ExistingRef(
+                resource_type="sensor_model",
+                database_id=3,
+            ),
+            serial_number="NEW123",
+            description=None,
+        ),
+        changes=(
+            FieldChange(
+                field="serial_number",
+                before="OLD123",
+                after="NEW123",
+                identity_change=True,
+            ),
+        ),
+        source_path="updates.sensors[0]",
+    )
+
+    created = ResolvedPlanItem(
+        plan_id="sensors[1]",
+        resource_type="sensor",
+        action=PlanAction.CREATE,
+        values=ResolvedSensorValues(
+            sensor_model=ExistingRef(
+                resource_type="sensor_model",
+                database_id=3,
+            ),
+            serial_number="OLD123",
+            description=None,
+        ),
+        source_path="sensors[1]",
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(reused, updated, created),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert errors == ()
+
+
+def test_sensor_update_conflicts_with_other_reused_identity():
+    reused = ResolvedPlanItem(
+        plan_id="sensors[0]",
+        resource_type="sensor",
+        action=PlanAction.REUSE,
+        database_id=18,
+        values=ResolvedSensorValues(
+            sensor_model=ExistingRef(
+                resource_type="sensor_model",
+                database_id=3,
+            ),
+            serial_number="TARGET123",
+            description=None,
+        ),
+        source_path="sensors[0]",
+    )
+
+    updated = ResolvedPlanItem(
+        plan_id="updates.sensors[0]",
+        resource_type="sensor",
+        action=PlanAction.UPDATE,
+        database_id=17,
+        values=ResolvedSensorValues(
+            sensor_model=ExistingRef(
+                resource_type="sensor_model",
+                database_id=3,
+            ),
+            serial_number="TARGET123",
+            description=None,
+        ),
+        changes=(
+            FieldChange(
+                field="serial_number",
+                before="OLD123",
+                after="TARGET123",
+                identity_change=True,
+            ),
+        ),
+        source_path="updates.sensors[0]",
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(reused, updated),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+    assert errors[0].resource_type == "sensor"
+    assert errors[0].source_path == "updates.sensors[0]"
+
+
+def test_duplicate_site_update_target_conflicts():
+    first = ResolvedPlanItem(
+        plan_id="updates.sites[0]",
+        resource_type="site",
+        action=PlanAction.UPDATE,
+        database_id=11,
+        values=ResolvedSiteValues(
+            site_code="SITE_A",
+            name="First",
+        ),
+        changes=(
+            FieldChange(
+                field="name",
+                before="Old",
+                after="First",
+                identity_change=False,
+            ),
+        ),
+        source_path="updates.sites[0]",
+    )
+
+    second = ResolvedPlanItem(
+        plan_id="updates.sites[1]",
+        resource_type="site",
+        action=PlanAction.UPDATE,
+        database_id=11,
+        values=ResolvedSiteValues(
+            site_code="SITE_A",
+            name="Second",
+        ),
+        changes=(
+            FieldChange(
+                field="name",
+                before="Old",
+                after="Second",
+                identity_change=False,
+            ),
+        ),
+        source_path="updates.sites[1]",
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(first, second),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+    assert errors[0].resource_type == "site"
+    assert errors[0].source_path == "updates.sites[1]"
+
+
+def test_sensor_update_rejects_unresolved_planned_sensor_model():
+    missing_model = PlannedRef(
+        resource_type="sensor_model",
+        plan_id="sensor_models[99]",
+    )
+
+    updated = ResolvedPlanItem(
+        plan_id="updates.sensors[0]",
+        resource_type="sensor",
+        action=PlanAction.UPDATE,
+        database_id=17,
+        values=ResolvedSensorValues(
+            sensor_model=missing_model,
+            serial_number="SENSOR123",
+            description=None,
+        ),
+        changes=(
+            FieldChange(
+                field="sensor_model",
+                before=ExistingRef(
+                    resource_type="sensor_model",
+                    database_id=3,
+                ),
+                after=missing_model,
+                identity_change=True,
+            ),
+        ),
+        source_path="updates.sensors[0]",
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(updated,),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+    assert errors[0].resource_type == "sensor"
+    assert errors[0].source_path == "updates.sensors[0]"
+
+
+def test_sensor_model_update_rejects_unresolved_planned_sensor_type():
+    missing_type = PlannedRef(
+        resource_type="sensor_type",
+        plan_id="sensor_types[99]",
+    )
+
+    updated = ResolvedPlanItem(
+        plan_id="updates.sensor_models[0]",
+        resource_type="sensor_model",
+        action=PlanAction.UPDATE,
+        database_id=51,
+        values=ResolvedSensorModelValues(
+            manufacturer="Campbell Scientific",
+            model="CS451",
+            sensor_type=missing_type,
+        ),
+        changes=(
+            FieldChange(
+                field="sensor_type",
+                before=ExistingRef(
+                    resource_type="sensor_type",
+                    database_id=31,
+                ),
+                after=missing_type,
+                identity_change=False,
+            ),
+        ),
+        source_path="updates.sensor_models[0]",
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(updated,),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+    assert errors[0].resource_type == "sensor_model"
+    assert errors[0].source_path == "updates.sensor_models[0]"
+
+
+def test_location_update_rejects_unresolved_planned_site():
+    missing_site = PlannedRef(
+        resource_type="site",
+        plan_id="sites[99]",
+    )
+
+    updated = ResolvedPlanItem(
+        plan_id="updates.locations[0]",
+        resource_type="location",
+        action=PlanAction.UPDATE,
+        database_id=71,
+        values=ResolvedLocationValues(
+            site=missing_site,
+            location_type=ExistingRef(
+                resource_type="location_type",
+                database_id=21,
+            ),
+            latitude=54.10,
+            longitude=13.40,
+            height_above_ground=1.30,
+            azimuth=180.0,
+        ),
+        changes=(
+            FieldChange(
+                field="site",
+                before=ExistingRef(
+                    resource_type="site",
+                    database_id=11,
+                ),
+                after=missing_site,
+                identity_change=True,
+            ),
+        ),
+        source_path="updates.locations[0]",
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(updated,),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+    assert errors[0].resource_type == "location"
+    assert errors[0].source_path == "updates.locations[0]"
+
+
+def test_location_update_rejects_unresolved_planned_location_type():
+    missing_type = PlannedRef(
+        resource_type="location_type",
+        plan_id="location_types[99]",
+    )
+
+    updated = ResolvedPlanItem(
+        plan_id="updates.locations[0]",
+        resource_type="location",
+        action=PlanAction.UPDATE,
+        database_id=71,
+        values=ResolvedLocationValues(
+            site=ExistingRef(
+                resource_type="site",
+                database_id=11,
+            ),
+            location_type=missing_type,
+            latitude=54.10,
+            longitude=13.40,
+            height_above_ground=1.30,
+            azimuth=180.0,
+        ),
+        changes=(
+            FieldChange(
+                field="location_type",
+                before=ExistingRef(
+                    resource_type="location_type",
+                    database_id=21,
+                ),
+                after=missing_type,
+                identity_change=False,
+            ),
+        ),
+        source_path="updates.locations[0]",
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(updated,),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+    assert errors[0].resource_type == "location"
+    assert errors[0].source_path == "updates.locations[0]"
 

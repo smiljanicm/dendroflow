@@ -10,6 +10,7 @@ from ..plan import (
     ResolvedDeploymentValues,
     ResolvedInterfaceValues,
     ResolvedLocationTypeValues,
+    ResolvedLocationValues,
     ResolvedPlan,
     ResolvedPlanItem,
     ResolvedSensorModelValues,
@@ -279,6 +280,31 @@ def _collect_planned_ref_errors(
             references = (
                 item.values.file,
                 item.values.deployment,
+            )
+
+        elif isinstance(
+            item.values,
+            ResolvedSensorValues,
+        ):
+            references = (
+                item.values.sensor_model,
+            )
+
+        elif isinstance(
+            item.values,
+            ResolvedSensorModelValues,
+        ):
+            references = (
+                item.values.sensor_type,
+            )
+
+        elif isinstance(
+            item.values,
+            ResolvedLocationValues,
+        ):
+            references = (
+                item.values.site,
+                item.values.location_type,
             )
 
         else:
