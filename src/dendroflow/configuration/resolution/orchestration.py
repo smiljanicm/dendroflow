@@ -34,7 +34,13 @@ from .raw import (
 )
 from .updates import (
     resolve_deployment_updates,
+    resolve_location_type_updates,
+    resolve_location_updates,
+    resolve_sensor_model_updates,
+    resolve_sensor_type_updates,
     resolve_sensor_updates,
+    resolve_site_updates,
+    resolve_variable_updates,
 )
 
 
@@ -214,42 +220,6 @@ def resolve_raw_config(
     )
 
 
-def resolve_update_config(
-    config: ConfigModel,
-    existing_bindings: tuple[PlanBinding, ...] = (),
-) -> ResolvedPlan:
-    """Resolve explicit CONFIG updates."""
-
-    validate_config(config)
-
-    metadata_items: list[ResolvedPlanItem] = []
-    errors: list[PlanError] = []
-
-    sensor_items, sensor_errors = resolve_sensor_updates(
-        config,
-        existing_bindings=existing_bindings,
-    )
-    metadata_items.extend(sensor_items)
-    errors.extend(sensor_errors)
-
-    deployment_items, deployment_errors = (
-        resolve_deployment_updates(
-            config,
-            existing_bindings=existing_bindings,
-        )
-    )
-    metadata_items.extend(deployment_items)
-    errors.extend(deployment_errors)
-
-    return ResolvedPlan(
-        metadata_items=tuple(metadata_items),
-        raw_items=(),
-        bindings=(),
-        errors=tuple(errors),
-        warnings=(),
-    )
-
-
 def _load_existing_deployment_states(
     plan: ResolvedPlan,
 ) -> tuple[ExistingDeploymentState, ...]:
@@ -375,3 +345,48 @@ def resolve_config(
         ),
         warnings=combined_plan.warnings,
     )
+
+
+def resolve_update_config(
+    config: ConfigModel,
+    *,
+    existing_bindings: tuple[PlanBinding, ...] = (),
+) -> ResolvedPlan:
+    metadata_items: list[ResolvedPlanItem] = []
+    errors: list[PlanError] = []
+
+    simple_resolvers = (
+        resolve_site_updates,
+        resolve_location_type_updates,
+        resolve_sensor_type_updates,
+        resolve_variable_updates,
+    )
+
+    for resolver in simple_resolvers:
+        items, resolver_errors = resolver(config)
+        metadata_items.extend(items)
+        errors.extend(resolver_errors)
+
+    relationship_resolvers = (
+        resolve_sensor_model_updates,
+        resolve_sensor_updates,
+        resolve_location_updates,
+        resolve_deployment_updates,
+    )
+
+    for resolver in relationship_resolvers:
+        items, resolver_errors = resolver(
+            config,
+            existing_bindings=existing_bindings,
+        )
+        metadata_items.extend(items)
+        errors.extend(resolver_errors)
+
+    return ResolvedPlan(
+        metadata_items=tuple(metadata_items),
+        raw_items=(),
+        bindings=(),
+        errors=tuple(errors),
+        warnings=(),
+    )
+

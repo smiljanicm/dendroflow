@@ -5,11 +5,14 @@ from dendroflow.configuration.metadata import MetadataRow
 from dendroflow.configuration.models import ConfigModel
 from dendroflow.configuration.plan import (
     ExistingRef,
+    FieldChange,
     PlanAction,
     PlanBinding,
     PlanErrorCode,
     PlannedRef,
+    ResolvedPlanItem,
 )
+from dendroflow.configuration.resolution import orchestration
 from dendroflow.configuration.resolution.orchestration import (
     resolve_update_config,
 )
@@ -44,6 +47,27 @@ def _deployment_row() -> MetadataRow:
             "valid_to": None,
         },
     )
+
+
+def _orchestration_update_item(
+    resource_type: str,
+    database_id: int,
+) -> ResolvedPlanItem:
+    return ResolvedPlanItem(
+        plan_id=f"updates.{resource_type}[0]",
+        resource_type=resource_type,
+        action=PlanAction.UPDATE,
+        values=None,
+        database_id=database_id,
+        changes=(
+            FieldChange(
+                field="test",
+                before="old",
+                after="new",
+            ),
+        ),
+    )
+
 
 def test_resolve_update_config_empty_config():
     plan = resolve_update_config(ConfigModel())
@@ -806,4 +830,174 @@ def test_noop_only_update_config_produces_empty_plan(
     assert plan.errors == ()
     assert plan.bindings == ()
     assert plan.requires_confirmation is False
+
+
+
+def test_update_orchestration_resolves_all_resource_types_in_order(
+    monkeypatch,
+):
+    calls: list[str] = []
+
+    binding = PlanBinding(
+        resource_type="sites",
+        alias="existing_site",
+        resource=ExistingRef(
+            resource_type="site",
+            database_id=11,
+        ),
+    )
+    bindings = (binding,)
+
+    resource_order = (
+        "site",
+        "location_type",
+        "sensor_type",
+        "variable",
+        "sensor_model",
+        "sensor",
+        "location",
+        "deployment",
+    )
+
+    def simple_resolver(
+        resource_type: str,
+        database_id: int,
+    ):
+        def resolve(config):
+            calls.append(resource_type)
+            return (
+                (
+                    _orchestration_update_item(
+                        resource_type,
+                        database_id,
+                    ),
+                ),
+                (),
+            )
+
+        return resolve
+
+    def relationship_resolver(
+        resource_type: str,
+        database_id: int,
+    ):
+        def resolve(
+            config,
+            existing_bindings=(),
+        ):
+            assert existing_bindings == bindings
+            calls.append(resource_type)
+            return (
+                (
+                    _orchestration_update_item(
+                        resource_type,
+                        database_id,
+                    ),
+                ),
+                (),
+            )
+
+        return resolve
+
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_site_updates",
+        simple_resolver("site", 1),
+    )
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_location_type_updates",
+        simple_resolver("location_type", 2),
+    )
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_sensor_type_updates",
+        simple_resolver("sensor_type", 3),
+    )
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_variable_updates",
+        simple_resolver("variable", 4),
+    )
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_sensor_model_updates",
+        relationship_resolver("sensor_model", 5),
+    )
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_sensor_updates",
+        relationship_resolver("sensor", 6),
+    )
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_location_updates",
+        relationship_resolver("location", 7),
+    )
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_deployment_updates",
+        relationship_resolver("deployment", 8),
+    )
+
+    plan = resolve_update_config(
+        ConfigModel(),
+        existing_bindings=bindings,
+    )
+
+    assert plan.errors == ()
+    assert plan.raw_items == ()
+    assert plan.bindings == ()
+
+    assert calls == list(resource_order)
+
+    assert [
+        item.resource_type
+        for item in plan.metadata_items
+    ] == list(resource_order)
+
+    assert [
+        item.database_id
+        for item in plan.metadata_items
+    ] == list(range(1, 9))
+
+
+def test_update_orchestration_continues_after_new_resource_error(
+    monkeypatch,
+):
+    error = orchestration.PlanError(
+        code=PlanErrorCode.NOT_FOUND,
+        resource_type="site",
+        source_path="updates.sites[0].update",
+        message="site resource not found",
+    )
+
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_site_updates",
+        lambda config: ((), (error,)),
+    )
+
+    monkeypatch.setattr(
+        orchestration,
+        "resolve_location_type_updates",
+        lambda config: (
+            (
+                _orchestration_update_item(
+                    "location_type",
+                    21,
+                ),
+            ),
+            (),
+        ),
+    )
+
+    plan = resolve_update_config(ConfigModel())
+
+    assert error in plan.errors
+
+    assert any(
+        item.resource_type == "location_type"
+        for item in plan.metadata_items
+    )
 
