@@ -1079,6 +1079,10 @@ def test_new_location_with_planned_site_does_not_query_database(
     )
 
     assert errors == ()
+    assert dict(items[0].identity.components) == {
+        "site": items[0].values.site,
+        "initial_label": config.locations[0].initial_label.label,
+    }
     assert not called
     assert items[0].action == PlanAction.CREATE
     assert bindings[0].resource == PlannedRef(
@@ -1150,6 +1154,10 @@ def test_existing_location_becomes_reuse(monkeypatch):
     )
 
     assert errors == ()
+    assert dict(items[0].identity.components) == {
+        "site": items[0].values.site,
+        "initial_label": config.locations[0].initial_label.label,
+    }
     assert items[0].action == PlanAction.REUSE
     assert items[0].database_id == 3
     assert bindings[0].resource == ExistingRef(

@@ -2012,6 +2012,10 @@ def test_location_site_change_is_identity_change(
     assert change.after == new_site
     assert change.identity_change is True
 
+    assert dict(items[0].identity.components) == {
+        "site": new_site,
+        "initial_label": "tree_001",
+    }
     assert items[0].values.site == new_site
     assert items[0].requires_confirmation is True
 

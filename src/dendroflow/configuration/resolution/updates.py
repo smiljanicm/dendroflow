@@ -2,6 +2,7 @@ from ..models import ConfigModel
 from ..plan import (
     ExistingRef,
     FieldChange,
+    NaturalIdentity,
     PlanAction,
     PlanBinding,
     PlanError,
@@ -1157,6 +1158,12 @@ def resolve_location_updates(
                         "height_above_ground"
                     ],
                     azimuth=scalar_values["azimuth"],
+                ),
+                identity=NaturalIdentity(
+                    components=(
+                        ("site", resolved_relationships["site"]),
+                        ("initial_label", row.values["initial_label"]),
+                    ),
                 ),
                 changes=tuple(changes),
                 source_path=source_path,

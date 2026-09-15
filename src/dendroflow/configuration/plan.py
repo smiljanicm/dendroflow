@@ -68,6 +68,19 @@ class FieldChange:
 
 
 @dataclass(frozen=True)
+class NaturalIdentity:
+    """Final natural identity supplied by resource resolution."""
+
+    components: tuple[tuple[str, object], ...]
+
+    def __post_init__(self) -> None:
+        if not self.components:
+            raise ValueError(
+                "natural identity must contain at least one component"
+            )
+
+
+@dataclass(frozen=True)
 class ResolvedPlanItem:
     """One executable resource operation."""
 
@@ -80,6 +93,7 @@ class ResolvedPlanItem:
     changes: tuple[FieldChange, ...] = ()
     confirmation_required: bool = False
     source_path: str | None = None
+    identity: NaturalIdentity | None = None
 
     def __post_init__(self) -> None:
         if not self.plan_id:

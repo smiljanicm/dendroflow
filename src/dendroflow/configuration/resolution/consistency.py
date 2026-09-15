@@ -344,6 +344,9 @@ def _final_identity(
 ) -> tuple[object, ...] | None:
     """Return the resource's final natural identity."""
 
+    if item.identity is not None:
+        return tuple(sorted(item.identity.components))
+
     if item.resource_type == "site":
         assert isinstance(
             item.values,

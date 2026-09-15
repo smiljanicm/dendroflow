@@ -858,6 +858,11 @@ def test_planned_deployment_flows_into_raw_interface(
         lambda **kwargs: (),
     )
     monkeypatch.setattr(
+        orchestration,
+        "find_deployments",
+        lambda **kwargs: (),
+    )
+    monkeypatch.setattr(
         raw,
         "find_file",
         lambda filepath: None,

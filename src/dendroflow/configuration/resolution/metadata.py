@@ -3,6 +3,7 @@ from ..metadata import MetadataRow
 from ..models import ConfigModel
 from ..plan import (
     ExistingRef,
+    NaturalIdentity,
     PlanAction,
     PlanBinding,
     PlanError,
@@ -864,6 +865,12 @@ def resolve_location_declarations(
                 resource_type="location",
                 action=PlanAction.CREATE,
                 values=values,
+                identity=NaturalIdentity(
+                    components=(
+                        ("site", values.site),
+                        ("initial_label", declaration.initial_label.label),
+                    ),
+                ),
                 source_path=plan_id,
             )
 
@@ -924,6 +931,12 @@ def resolve_location_declarations(
                 action=PlanAction.REUSE,
                 database_id=row.database_id,
                 values=values,
+                identity=NaturalIdentity(
+                    components=(
+                        ("site", values.site),
+                        ("initial_label", declaration.initial_label.label),
+                    ),
+                ),
                 source_path=plan_id,
             )
 
