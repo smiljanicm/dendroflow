@@ -29,7 +29,11 @@ def _sensor_item(
     plan_id: str,
     action: PlanAction,
     database_id: int,
+    serial_number: str | None = None,
 ) -> ResolvedPlanItem:
+    if serial_number is None:
+        serial_number = f"SENSOR{database_id}"
+
     return ResolvedPlanItem(
         plan_id=plan_id,
         resource_type="sensor",
@@ -40,7 +44,7 @@ def _sensor_item(
                 resource_type="sensor_model",
                 database_id=3,
             ),
-            serial_number="SENSOR123",
+            serial_number=serial_number,
             description=None,
         ),
         changes=(
@@ -57,7 +61,6 @@ def _sensor_item(
         ),
         source_path=plan_id,
     )
-
 
 def _file_item() -> ResolvedPlanItem:
     return ResolvedPlanItem(
@@ -1142,5 +1145,4 @@ def test_resolve_config_deduplicates_deployment_history_lookups(
         }
     ]
     assert plan.errors == ()
-
 
