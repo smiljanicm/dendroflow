@@ -9,9 +9,13 @@ from dendroflow.configuration.plan import (
     ResolvedDeploymentValues,
     ResolvedFileValues,
     ResolvedInterfaceValues,
+    ResolvedLocationTypeValues,
     ResolvedPlan,
     ResolvedPlanItem,
+    ResolvedSensorTypeValues,
     ResolvedSensorValues,
+    ResolvedSiteValues,
+    ResolvedVariableValues,
 )
 from dendroflow.configuration.resolution.consistency import (
     ExistingDeploymentState,
@@ -1431,4 +1435,324 @@ def test_consistency_errors_have_deterministic_rule_order():
         "updates.sensors[3]",
         "files[0].interfaces[0]",
     )
+
+
+def _site_identity_item(
+    *,
+    plan_id: str,
+    action: PlanAction,
+    site_code: str,
+    database_id: int | None = None,
+) -> ResolvedPlanItem:
+    changes = ()
+
+    if action == PlanAction.UPDATE:
+        changes = (
+            FieldChange(
+                field="site_code",
+                before="OLD",
+                after=site_code,
+                identity_change=True,
+            ),
+        )
+
+    return ResolvedPlanItem(
+        plan_id=plan_id,
+        resource_type="site",
+        action=action,
+        database_id=database_id,
+        values=ResolvedSiteValues(
+            site_code=site_code,
+            name="Test site",
+        ),
+        changes=changes,
+        source_path=plan_id,
+    )
+
+
+def _location_type_identity_item(
+    *,
+    plan_id: str,
+    action: PlanAction,
+    type_: str,
+    database_id: int | None = None,
+) -> ResolvedPlanItem:
+    changes = ()
+
+    if action == PlanAction.UPDATE:
+        changes = (
+            FieldChange(
+                field="type",
+                before="OLD",
+                after=type_,
+                identity_change=True,
+            ),
+        )
+
+    return ResolvedPlanItem(
+        plan_id=plan_id,
+        resource_type="location_type",
+        action=action,
+        database_id=database_id,
+        values=ResolvedLocationTypeValues(
+            type=type_,
+        ),
+        changes=changes,
+        source_path=plan_id,
+    )
+
+
+def _sensor_type_identity_item(
+    *,
+    plan_id: str,
+    action: PlanAction,
+    type_: str,
+    database_id: int | None = None,
+) -> ResolvedPlanItem:
+    changes = ()
+
+    if action == PlanAction.UPDATE:
+        changes = (
+            FieldChange(
+                field="type",
+                before="OLD",
+                after=type_,
+                identity_change=True,
+            ),
+        )
+
+    return ResolvedPlanItem(
+        plan_id=plan_id,
+        resource_type="sensor_type",
+        action=action,
+        database_id=database_id,
+        values=ResolvedSensorTypeValues(
+            type=type_,
+        ),
+        changes=changes,
+        source_path=plan_id,
+    )
+
+
+def _variable_identity_item(
+    *,
+    plan_id: str,
+    action: PlanAction,
+    variable: str,
+    database_id: int | None = None,
+) -> ResolvedPlanItem:
+    changes = ()
+
+    if action == PlanAction.UPDATE:
+        changes = (
+            FieldChange(
+                field="variable",
+                before="OLD",
+                after=variable,
+                identity_change=True,
+            ),
+        )
+
+    return ResolvedPlanItem(
+        plan_id=plan_id,
+        resource_type="variable",
+        action=action,
+        database_id=database_id,
+        values=ResolvedVariableValues(
+            variable=variable,
+        ),
+        changes=changes,
+        source_path=plan_id,
+    )
+
+
+def test_site_updates_with_same_final_identity_conflict():
+    first = _site_identity_item(
+        plan_id="updates.sites[0]",
+        action=PlanAction.UPDATE,
+        database_id=11,
+        site_code="SANDHAGEN",
+    )
+    second = _site_identity_item(
+        plan_id="updates.sites[1]",
+        action=PlanAction.UPDATE,
+        database_id=12,
+        site_code="SANDHAGEN",
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(first, second),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+    assert errors[0].resource_type == "site"
+    assert errors[0].source_path == "updates.sites[1]"
+
+
+def test_location_type_create_and_update_identity_conflict():
+    created = _location_type_identity_item(
+        plan_id="location_types[0]",
+        action=PlanAction.CREATE,
+        type_="stem",
+    )
+    updated = _location_type_identity_item(
+        plan_id="updates.location_types[0]",
+        action=PlanAction.UPDATE,
+        database_id=21,
+        type_="stem",
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(created, updated),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+    assert errors[0].resource_type == "location_type"
+    assert errors[0].source_path == (
+        "updates.location_types[0]"
+    )
+
+
+def test_sensor_type_update_conflicts_with_reused_identity():
+    reused = _sensor_type_identity_item(
+        plan_id="sensor_types[0]",
+        action=PlanAction.REUSE,
+        database_id=31,
+        type_="pressure",
+    )
+    updated = _sensor_type_identity_item(
+        plan_id="updates.sensor_types[0]",
+        action=PlanAction.UPDATE,
+        database_id=32,
+        type_="pressure",
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(reused, updated),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+    assert errors[0].resource_type == "sensor_type"
+    assert errors[0].source_path == (
+        "updates.sensor_types[0]"
+    )
+
+
+def test_same_sensor_type_reuse_and_update_are_consistent():
+    reused = _sensor_type_identity_item(
+        plan_id="sensor_types[0]",
+        action=PlanAction.REUSE,
+        database_id=31,
+        type_="pressure",
+    )
+    updated = _sensor_type_identity_item(
+        plan_id="updates.sensor_types[0]",
+        action=PlanAction.UPDATE,
+        database_id=31,
+        type_="pressure",
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(reused, updated),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert errors == ()
+
+
+def test_variable_creates_with_same_final_identity_conflict():
+    first = _variable_identity_item(
+        plan_id="variables[0]",
+        action=PlanAction.CREATE,
+        variable="water_level",
+    )
+    second = _variable_identity_item(
+        plan_id="variables[1]",
+        action=PlanAction.CREATE,
+        variable="water_level",
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(first, second),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+    assert errors[0].resource_type == "variable"
+    assert errors[0].source_path == "variables[1]"
+
+
+def test_simple_resources_with_different_final_identities_are_consistent():
+    items = (
+        _site_identity_item(
+            plan_id="updates.sites[0]",
+            action=PlanAction.UPDATE,
+            database_id=11,
+            site_code="SITE_A",
+        ),
+        _site_identity_item(
+            plan_id="updates.sites[1]",
+            action=PlanAction.UPDATE,
+            database_id=12,
+            site_code="SITE_B",
+        ),
+        _variable_identity_item(
+            plan_id="variables[0]",
+            action=PlanAction.CREATE,
+            variable="water_level",
+        ),
+        _variable_identity_item(
+            plan_id="variables[1]",
+            action=PlanAction.CREATE,
+            variable="temperature",
+        ),
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=items,
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert errors == ()
+
+
+def test_updated_resource_releases_reused_old_identity():
+    reused = _sensor_type_identity_item(
+        plan_id="sensor_types[0]",
+        action=PlanAction.REUSE,
+        database_id=31,
+        type_="pressure",
+    )
+    updated = _sensor_type_identity_item(
+        plan_id="updates.sensor_types[0]",
+        action=PlanAction.UPDATE,
+        database_id=31,
+        type_="water_pressure",
+    )
+    created = _sensor_type_identity_item(
+        plan_id="sensor_types[1]",
+        action=PlanAction.CREATE,
+        type_="pressure",
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(reused, updated, created),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert errors == ()
 

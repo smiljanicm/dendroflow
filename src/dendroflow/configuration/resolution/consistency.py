@@ -9,9 +9,13 @@ from ..plan import (
     PlannedRef,
     ResolvedDeploymentValues,
     ResolvedInterfaceValues,
+    ResolvedLocationTypeValues,
     ResolvedPlan,
     ResolvedPlanItem,
+    ResolvedSensorTypeValues,
     ResolvedSensorValues,
+    ResolvedSiteValues,
+    ResolvedVariableValues,
 )
 
 
@@ -55,69 +59,6 @@ def _collect_duplicate_update_errors(
             continue
 
         seen_updates.add(key)
-
-    return errors
-
-
-def _collect_sensor_identity_errors(
-    plan: ResolvedPlan,
-) -> list[PlanError]:
-    errors: list[PlanError] = []
-
-    seen: dict[
-        tuple[object, str],
-        tuple[str, object],
-    ] = {}
-
-    for item in plan.metadata_items:
-        if item.resource_type != "sensor":
-            continue
-
-        if item.action not in {
-            PlanAction.CREATE,
-            PlanAction.UPDATE,
-        }:
-            continue
-
-        assert isinstance(
-            item.values,
-            ResolvedSensorValues,
-        )
-
-        identity = (
-            item.values.sensor_model,
-            item.values.serial_number,
-        )
-
-        if item.action == PlanAction.UPDATE:
-            assert item.database_id is not None
-            resource = (
-                "existing",
-                item.database_id,
-            )
-        else:
-            resource = (
-                "planned",
-                item.plan_id,
-            )
-
-        previous = seen.get(identity)
-
-        if previous is not None and previous != resource:
-            errors.append(
-                PlanError(
-                    code=PlanErrorCode.CONFLICT,
-                    resource_type="sensor",
-                    source_path=item.source_path,
-                    message=(
-                        "sensor final identity conflicts "
-                        "with another planned sensor state"
-                    ),
-                )
-            )
-            continue
-
-        seen[identity] = resource
 
     return errors
 
@@ -370,6 +311,141 @@ def _collect_planned_ref_errors(
     return errors
 
 
+
+def _final_identity(
+    item: ResolvedPlanItem,
+) -> tuple[object, ...] | None:
+    """Return the resource's final natural identity."""
+
+    if item.resource_type == "site":
+        assert isinstance(
+            item.values,
+            ResolvedSiteValues,
+        )
+        return (item.values.site_code,)
+
+    if item.resource_type == "location_type":
+        assert isinstance(
+            item.values,
+            ResolvedLocationTypeValues,
+        )
+        return (item.values.type,)
+
+    if item.resource_type == "sensor_type":
+        assert isinstance(
+            item.values,
+            ResolvedSensorTypeValues,
+        )
+        return (item.values.type,)
+
+    if item.resource_type == "variable":
+        assert isinstance(
+            item.values,
+            ResolvedVariableValues,
+        )
+        return (item.values.variable,)
+
+    if item.resource_type == "sensor":
+        assert isinstance(
+            item.values,
+            ResolvedSensorValues,
+        )
+        return (
+            item.values.sensor_model,
+            item.values.serial_number,
+        )
+
+    return None
+
+
+def _identity_resource_key(
+    item: ResolvedPlanItem,
+) -> tuple[str, object]:
+    if item.action in {
+        PlanAction.REUSE,
+        PlanAction.UPDATE,
+    }:
+        assert item.database_id is not None
+        return ("existing", item.database_id)
+
+    return ("planned", item.plan_id)
+
+
+def _collect_final_identity_errors(
+    plan: ResolvedPlan,
+) -> list[PlanError]:
+    errors: list[PlanError] = []
+
+    updated_resources = {
+        (
+            item.resource_type,
+            item.database_id,
+        )
+        for item in plan.metadata_items
+        if item.action == PlanAction.UPDATE
+    }
+
+    seen: dict[
+        tuple[str, tuple[object, ...]],
+        tuple[str, object],
+    ] = {}
+
+    for item in plan.metadata_items:
+        if item.action not in {
+            PlanAction.CREATE,
+            PlanAction.REUSE,
+            PlanAction.UPDATE,
+        }:
+            continue
+
+        # A REUSE row followed by an UPDATE is not a separate
+        # final state. The UPDATE represents that persisted row.
+        if (
+            item.action == PlanAction.REUSE
+            and (
+                item.resource_type,
+                item.database_id,
+            )
+            in updated_resources
+        ):
+            continue
+
+        identity = _final_identity(item)
+
+        if identity is None:
+            continue
+
+        identity_key = (
+            item.resource_type,
+            identity,
+        )
+        resource = _identity_resource_key(item)
+
+        previous = seen.get(identity_key)
+
+        if (
+            previous is not None
+            and previous != resource
+        ):
+            errors.append(
+                PlanError(
+                    code=PlanErrorCode.CONFLICT,
+                    resource_type=item.resource_type,
+                    source_path=item.source_path,
+                    message=(
+                        f"{item.resource_type} final identity "
+                        "conflicts with another planned "
+                        "resource state"
+                    ),
+                )
+            )
+            continue
+
+        seen[identity_key] = resource
+
+    return errors
+
+
 def collect_plan_consistency_errors(
     plan: ResolvedPlan,
     *,
@@ -385,7 +461,7 @@ def collect_plan_consistency_errors(
         _collect_duplicate_update_errors(plan)
     )
     errors.extend(
-        _collect_sensor_identity_errors(plan)
+        _collect_final_identity_errors(plan)
     )
     errors.extend(
         _collect_deployment_overlap_errors(plan)
