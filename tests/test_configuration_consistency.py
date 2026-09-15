@@ -12,6 +12,7 @@ from dendroflow.configuration.plan import (
     ResolvedLocationTypeValues,
     ResolvedPlan,
     ResolvedPlanItem,
+    ResolvedSensorModelValues,
     ResolvedSensorTypeValues,
     ResolvedSensorValues,
     ResolvedSiteValues,
@@ -1755,4 +1756,149 @@ def test_updated_resource_releases_reused_old_identity():
     errors = collect_plan_consistency_errors(plan)
 
     assert errors == ()
+
+
+def _sensor_model_identity_item(
+    *,
+    plan_id: str,
+    action: PlanAction,
+    manufacturer: str,
+    model: str,
+    database_id: int | None = None,
+    sensor_type_id: int = 31,
+) -> ResolvedPlanItem:
+    changes = ()
+
+    if action == PlanAction.UPDATE:
+        changes = (
+            FieldChange(
+                field="manufacturer",
+                before="OLD",
+                after=manufacturer,
+                identity_change=True,
+            ),
+        )
+
+    return ResolvedPlanItem(
+        plan_id=plan_id,
+        resource_type="sensor_model",
+        action=action,
+        database_id=database_id,
+        values=ResolvedSensorModelValues(
+            manufacturer=manufacturer,
+            model=model,
+            sensor_type=ExistingRef(
+                resource_type="sensor_type",
+                database_id=sensor_type_id,
+            ),
+        ),
+        changes=changes,
+        source_path=plan_id,
+    )
+
+
+def test_sensor_model_updates_with_same_final_identity_conflict():
+    first = _sensor_model_identity_item(
+        plan_id="updates.sensor_models[0]",
+        action=PlanAction.UPDATE,
+        database_id=51,
+        manufacturer="Campbell Scientific",
+        model="CS451",
+    )
+    second = _sensor_model_identity_item(
+        plan_id="updates.sensor_models[1]",
+        action=PlanAction.UPDATE,
+        database_id=52,
+        manufacturer="Campbell Scientific",
+        model="CS451",
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(first, second),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+    assert errors[0].resource_type == "sensor_model"
+    assert errors[0].source_path == (
+        "updates.sensor_models[1]"
+    )
+
+
+def test_sensor_model_create_and_update_identity_conflict():
+    created = _sensor_model_identity_item(
+        plan_id="sensor_models[0]",
+        action=PlanAction.CREATE,
+        manufacturer="Campbell Scientific",
+        model="CS451",
+    )
+    updated = _sensor_model_identity_item(
+        plan_id="updates.sensor_models[0]",
+        action=PlanAction.UPDATE,
+        database_id=52,
+        manufacturer="Campbell Scientific",
+        model="CS451",
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(created, updated),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+    assert errors[0].resource_type == "sensor_model"
+
+
+def test_sensor_models_with_same_model_but_different_manufacturer_are_consistent():
+    first = _sensor_model_identity_item(
+        plan_id="sensor_models[0]",
+        action=PlanAction.CREATE,
+        manufacturer="Campbell Scientific",
+        model="CS451",
+    )
+    second = _sensor_model_identity_item(
+        plan_id="sensor_models[1]",
+        action=PlanAction.CREATE,
+        manufacturer="Acme Sensors",
+        model="CS451",
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(first, second),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert errors == ()
+
+
+def test_sensor_model_identity_ignores_sensor_type():
+    first = _sensor_model_identity_item(
+        plan_id="sensor_models[0]",
+        action=PlanAction.CREATE,
+        manufacturer="Campbell Scientific",
+        model="CS451",
+        sensor_type_id=31,
+    )
+    second = _sensor_model_identity_item(
+        plan_id="sensor_models[1]",
+        action=PlanAction.CREATE,
+        manufacturer="Campbell Scientific",
+        model="CS451",
+        sensor_type_id=32,
+    )
+
+    plan = ResolvedPlan(
+        metadata_items=(first, second),
+    )
+
+    errors = collect_plan_consistency_errors(plan)
+
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+    assert errors[0].resource_type == "sensor_model"
 

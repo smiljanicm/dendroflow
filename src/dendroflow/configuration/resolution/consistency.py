@@ -12,6 +12,7 @@ from ..plan import (
     ResolvedLocationTypeValues,
     ResolvedPlan,
     ResolvedPlanItem,
+    ResolvedSensorModelValues,
     ResolvedSensorTypeValues,
     ResolvedSensorValues,
     ResolvedSiteValues,
@@ -353,6 +354,16 @@ def _final_identity(
         return (
             item.values.sensor_model,
             item.values.serial_number,
+        )
+
+    if item.resource_type == "sensor_model":
+        assert isinstance(
+            item.values,
+            ResolvedSensorModelValues,
+        )
+        return (
+            item.values.manufacturer,
+            item.values.model,
         )
 
     return None
