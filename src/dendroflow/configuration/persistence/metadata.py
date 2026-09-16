@@ -39,15 +39,34 @@ def _create_site(
             "site CREATE requires ResolvedSiteValues"
         )
 
+    values = item.values
+
+    parent_id = (
+        None
+        if values.parent is None
+        else context.resolve(values.parent)
+    )
+
     row = connection.execute(
         """
-        INSERT INTO sites (name, site_code)
-        VALUES (%s, %s)
+        INSERT INTO sites (
+            name,
+            site_code,
+            description,
+            latitude,
+            longitude,
+            parent_id
+        )
+        VALUES (%s, %s, %s, %s, %s, %s)
         RETURNING site_id
         """,
         (
-            item.values.name,
-            item.values.site_code,
+            values.name,
+            values.site_code,
+            values.description,
+            values.latitude,
+            values.longitude,
+            parent_id,
         ),
     ).fetchone()
 
@@ -67,7 +86,6 @@ def _create_site(
     )
 
     return result
-
 
 def create_metadata_item(
     connection: object,

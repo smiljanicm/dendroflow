@@ -223,8 +223,14 @@ def test_metadata_create_site_uses_resolved_values():
 
     assert "INSERT INTO sites" in query
     assert "RETURNING site_id" in query
-    assert params == ("Sandhagen", "SAN")
-
+    assert params == (
+        "Sandhagen",
+        "SAN",
+        None,
+        None,
+        None,
+        None,
+    )
 
 @pytest.mark.parametrize("returned_id", [0, -1])
 def test_metadata_create_site_rejects_invalid_returned_id(
@@ -1787,4 +1793,189 @@ def test_metadata_create_full_workflow():
         valid_from,
         None,
     )
+
+
+def test_metadata_create_site_persists_optional_fields():
+    connection = FakeConnection(returned_id=17)
+    context = ApplyContext()
+
+    item = ResolvedPlanItem(
+        plan_id="sites[0]",
+        resource_type="site",
+        action=PlanAction.CREATE,
+        values=ResolvedSiteValues(
+            site_code="SAN",
+            name="Sandhagen",
+            description="Rewetted monitoring site",
+            latitude=54.10,
+            longitude=13.40,
+        ),
+    )
+
+    result = create_metadata_item(
+        connection,
+        item,
+        context,
+    )
+
+    assert len(connection.calls) == 1
+
+    query, params = connection.calls[0]
+
+    normalized_query = " ".join(query.split())
+
+    assert (
+        "INSERT INTO sites "
+        "( name, site_code, description, latitude, longitude, parent_id )"
+    ) in normalized_query
+    assert "RETURNING site_id" in normalized_query
+
+    assert params == (
+        "Sandhagen",
+        "SAN",
+        "Rewetted monitoring site",
+        54.10,
+        13.40,
+        None,
+    )
+
+    assert result.database_id == 17
+    assert context.resolve(
+        PlannedRef(
+            resource_type="site",
+            plan_id="sites[0]",
+        )
+    ) == 17
+
+
+def test_metadata_create_site_persists_existing_parent():
+    connection = FakeConnection(returned_id=17)
+    context = ApplyContext()
+
+    item = ResolvedPlanItem(
+        plan_id="sites[0]",
+        resource_type="site",
+        action=PlanAction.CREATE,
+        values=ResolvedSiteValues(
+            site_code="SAN_CHILD",
+            name="Sandhagen subplot",
+            parent=ExistingRef(
+                resource_type="site",
+                database_id=5,
+            ),
+        ),
+    )
+
+    result = create_metadata_item(
+        connection,
+        item,
+        context,
+    )
+
+    assert len(connection.calls) == 1
+
+    query, params = connection.calls[0]
+
+    assert "INSERT INTO sites" in query
+    assert "parent_id" in query
+    assert params == (
+        "Sandhagen subplot",
+        "SAN_CHILD",
+        None,
+        None,
+        None,
+        5,
+    )
+
+    assert result.database_id == 17
+    assert context.resolve(
+        PlannedRef(
+            resource_type="site",
+            plan_id="sites[0]",
+        )
+    ) == 17
+
+
+def test_metadata_create_site_persists_planned_parent():
+    connection = FakeConnection(returned_id=18)
+    context = ApplyContext()
+
+    context.register(
+        plan_id="sites[0]",
+        resource_type="site",
+        database_id=5,
+    )
+
+    item = ResolvedPlanItem(
+        plan_id="sites[1]",
+        resource_type="site",
+        action=PlanAction.CREATE,
+        values=ResolvedSiteValues(
+            site_code="SAN_CHILD",
+            name="Sandhagen subplot",
+            parent=PlannedRef(
+                resource_type="site",
+                plan_id="sites[0]",
+            ),
+        ),
+    )
+
+    result = create_metadata_item(
+        connection,
+        item,
+        context,
+    )
+
+    assert len(connection.calls) == 1
+
+    query, params = connection.calls[0]
+
+    assert "INSERT INTO sites" in query
+    assert params == (
+        "Sandhagen subplot",
+        "SAN_CHILD",
+        None,
+        None,
+        None,
+        5,
+    )
+
+    assert result.database_id == 18
+    assert context.resolve(
+        PlannedRef(
+            resource_type="site",
+            plan_id="sites[1]",
+        )
+    ) == 18
+
+
+def test_metadata_create_site_rejects_unresolved_planned_parent():
+    connection = FakeConnection(returned_id=18)
+    context = ApplyContext()
+
+    item = ResolvedPlanItem(
+        plan_id="sites[1]",
+        resource_type="site",
+        action=PlanAction.CREATE,
+        values=ResolvedSiteValues(
+            site_code="SAN_CHILD",
+            name="Sandhagen subplot",
+            parent=PlannedRef(
+                resource_type="site",
+                plan_id="sites[0]",
+            ),
+        ),
+    )
+
+    with pytest.raises(
+        ApplyError,
+        match="planned reference is not available",
+    ):
+        create_metadata_item(
+            connection,
+            item,
+            context,
+        )
+
+    assert connection.calls == []
 
