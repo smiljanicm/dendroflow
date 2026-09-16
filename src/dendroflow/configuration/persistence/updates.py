@@ -2,6 +2,7 @@ from psycopg import sql
 
 from ..plan import (
     PlanAction,
+    ResolvedDeploymentValues,
     ResolvedLocationTypeValues,
     ResolvedLocationValues,
     ResolvedPlanItem,
@@ -79,6 +80,14 @@ _LOCATION_UPDATE_COLUMNS = {
     "longitude": "longitude",
     "height_above_ground": "height_above_ground",
     "azimuth": "azimuth",
+}
+
+_DEPLOYMENT_UPDATE_COLUMNS = {
+    "sensor": "sensor_id",
+    "location": "location_id",
+    "variable": "variable_id",
+    "valid_from": "valid_from",
+    "valid_to": "valid_to",
 }
 
 def _validate_site_update(
@@ -294,6 +303,43 @@ def update_metadata_item(
     context: ApplyContext,
 ) -> ApplyItemResult:
     """Persist one resolved METADATA UPDATE item."""
+
+    if item.resource_type == "deployment":
+        values = _validate_metadata_update(
+            item,
+            values_type=ResolvedDeploymentValues,
+            columns=_DEPLOYMENT_UPDATE_COLUMNS,
+        )
+
+        updates = []
+
+        for change in item.changes:
+            after = getattr(values, change.field)
+            before = change.before
+
+            if change.field in {
+                "sensor",
+                "location",
+                "variable",
+            }:
+                after = context.resolve(after)
+                before = context.resolve(before)
+
+            updates.append(
+                (
+                    _DEPLOYMENT_UPDATE_COLUMNS[change.field],
+                    after,
+                    before,
+                )
+            )
+
+        return _execute_metadata_update(
+            connection,
+            item,
+            table="deployments",
+            primary_key="deployment_id",
+            updates=tuple(updates),
+        )
 
     if item.resource_type == "location":
         values = _validate_metadata_update(
