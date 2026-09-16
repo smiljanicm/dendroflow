@@ -195,10 +195,10 @@ def test_site_update_persists_name_with_old_value_guard():
     query, params = connection.calls[0]
 
     assert " ".join(query.as_string().split()) == (
-        'UPDATE sites SET "name" = %s '
-        'WHERE site_id = %s '
+        'UPDATE "sites" SET "name" = %s '
+        'WHERE "site_id" = %s '
         'AND "name" IS NOT DISTINCT FROM %s '
-        'RETURNING site_id'
+        'RETURNING "site_id"'
     )
     assert params == ("New name", 11, "Old name")
 
@@ -238,11 +238,11 @@ def test_site_update_writes_and_guards_each_changed_field():
     query, params = connection.calls[0]
 
     assert " ".join(query.as_string().split()) == (
-        'UPDATE sites SET "name" = %s, "site_code" = %s '
-        'WHERE site_id = %s '
+        'UPDATE "sites" SET "name" = %s, "site_code" = %s '
+        'WHERE "site_id" = %s '
         'AND "name" IS NOT DISTINCT FROM %s '
         'AND "site_code" IS NOT DISTINCT FROM %s '
-        'RETURNING site_id'
+        'RETURNING "site_id"'
     )
     assert params == (
         "New name",
@@ -362,10 +362,10 @@ def test_site_update_resolves_existing_parent_changes(
     query, params = connection.calls[0]
 
     assert " ".join(query.as_string().split()) == (
-        'UPDATE sites SET "parent_id" = %s '
-        'WHERE site_id = %s '
+        'UPDATE "sites" SET "parent_id" = %s '
+        'WHERE "site_id" = %s '
         'AND "parent_id" IS NOT DISTINCT FROM %s '
-        'RETURNING site_id'
+        'RETURNING "site_id"'
     )
     assert params == expected_params
 

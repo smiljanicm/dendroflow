@@ -1,6 +1,13 @@
 from psycopg import sql
 
-from ..plan import PlanAction, ResolvedPlanItem, ResolvedSiteValues
+from ..plan import (
+    PlanAction,
+    ResolvedLocationTypeValues,
+    ResolvedPlanItem,
+    ResolvedSensorTypeValues,
+    ResolvedSiteValues,
+    ResolvedVariableValues,
+)
 from .context import ApplyContext
 from .models import ApplyError, ApplyErrorCode, ApplyItemResult
 
@@ -13,6 +20,42 @@ _SITE_UPDATE_COLUMNS = {
     "parent": "parent_id",
 }
 
+_LOCATION_TYPE_UPDATE_COLUMNS = {
+    "type": "type",
+    "description": "description",
+}
+
+_SENSOR_TYPE_UPDATE_COLUMNS = {
+    "type": "type",
+    "description": "description",
+}
+
+_VARIABLE_UPDATE_COLUMNS = {
+    "variable": "variable",
+    "derived": "derived",
+    "description": "description",
+}
+
+_SIMPLE_UPDATE_SPECS = {
+    "location_type": (
+        ResolvedLocationTypeValues,
+        "location_types",
+        "location_type_id",
+        _LOCATION_TYPE_UPDATE_COLUMNS,
+    ),
+    "sensor_type": (
+        ResolvedSensorTypeValues,
+        "sensor_types",
+        "sensor_type_id",
+        _SENSOR_TYPE_UPDATE_COLUMNS,
+    ),
+    "variable": (
+        ResolvedVariableValues,
+        "variables",
+        "variable_id",
+        _VARIABLE_UPDATE_COLUMNS,
+    ),
+}
 
 def _validate_site_update(
     item: ResolvedPlanItem,
@@ -72,35 +115,94 @@ def _validate_site_update(
     return item.values
 
 
-def update_metadata_item(
+def _validate_simple_update(
+    item: ResolvedPlanItem,
+    *,
+    values_type: type,
+    columns: dict[str, str],
+) -> object:
+    """Validate a simple-resource UPDATE before database access."""
+
+    resource_type = item.resource_type
+
+    if item.action != PlanAction.UPDATE:
+        raise ValueError(
+            "METADATA update persistence requires UPDATE action"
+        )
+
+    if not isinstance(item.values, values_type):
+        raise TypeError(
+            f"{resource_type} UPDATE requires {values_type.__name__}"
+        )
+
+    if (
+        type(item.database_id) is not int
+        or item.database_id <= 0
+    ):
+        raise ValueError(
+            f"{resource_type} UPDATE requires "
+            "a positive integer database_id"
+        )
+
+    if not item.changes:
+        raise ValueError(
+            f"{resource_type} UPDATE requires at least one change"
+        )
+
+    seen_fields: set[str] = set()
+
+    for change in item.changes:
+        if change.field not in columns:
+            raise ValueError(
+                f"unsupported {resource_type} UPDATE field: "
+                f"{change.field}"
+            )
+
+        if change.field in seen_fields:
+            raise ValueError(
+                f"duplicate {resource_type} UPDATE field: "
+                f"{change.field}"
+            )
+
+        seen_fields.add(change.field)
+
+        if change.after != getattr(item.values, change.field):
+            raise ValueError(
+                f"{resource_type} UPDATE change.after does not match "
+                f"resolved values: {change.field}"
+            )
+
+    return item.values
+
+
+def _execute_metadata_update(
     connection: object,
     item: ResolvedPlanItem,
-    context: ApplyContext,
+    *,
+    table: str,
+    primary_key: str,
+    updates: tuple[tuple[str, object, object], ...],
 ) -> ApplyItemResult:
-    """Persist one resolved METADATA UPDATE item."""
+    """Execute a validated UPDATE.
 
-    values = _validate_site_update(item)
+    Each update contains:
+    (database column, final value, previous value).
+
+    Table and column names must come from writer-owned mappings.
+    """
+
+    if not updates:
+        raise ValueError(
+            "METADATA UPDATE requires at least one column"
+        )
 
     assignments = []
     guards = []
     new_values = []
     old_values = []
 
-    for change in item.changes:
-        column = sql.Identifier(
-            _SITE_UPDATE_COLUMNS[change.field]
-        )
-
-        after = getattr(values, change.field)
-        before = change.before
-
-        if change.field == "parent":
-            after = (
-                None if after is None else context.resolve(after)
-            )
-            before = (
-                None if before is None else context.resolve(before)
-            )
+    for column_name, after, before in updates:
+        column = sql.Identifier(column_name)
 
         assignments.append(
             sql.SQL("{} = %s").format(column)
@@ -113,13 +215,15 @@ def update_metadata_item(
 
     query = sql.SQL(
         """
-        UPDATE sites
+        UPDATE {table}
         SET {assignments}
-        WHERE site_id = %s
+        WHERE {primary_key} = %s
           AND {guards}
-        RETURNING site_id
+        RETURNING {primary_key}
         """
     ).format(
+        table=sql.Identifier(table),
+        primary_key=sql.Identifier(primary_key),
         assignments=sql.SQL(", ").join(assignments),
         guards=sql.SQL(" AND ").join(guards),
     )
@@ -136,8 +240,9 @@ def update_metadata_item(
         raise ApplyError(
             ApplyErrorCode.STALE_PLAN,
             (
-                f"site UPDATE plan is stale: {item.plan_id} "
-                f"(site_id={item.database_id})"
+                f"{item.resource_type} UPDATE plan is stale: "
+                f"{item.plan_id} "
+                f"({primary_key}={item.database_id})"
             ),
         )
 
@@ -147,7 +252,8 @@ def update_metadata_item(
         or row[0] != item.database_id
     ):
         raise ValueError(
-            "site UPDATE returned an unexpected database_id"
+            f"{item.resource_type} UPDATE returned "
+            "an unexpected database_id"
         )
 
     return ApplyItemResult(
@@ -155,5 +261,73 @@ def update_metadata_item(
         resource_type=item.resource_type,
         action=item.action,
         database_id=item.database_id,
+    )
+
+
+def update_metadata_item(
+    connection: object,
+    item: ResolvedPlanItem,
+    context: ApplyContext,
+) -> ApplyItemResult:
+    """Persist one resolved METADATA UPDATE item."""
+
+    if item.resource_type in _SIMPLE_UPDATE_SPECS:
+        values_type, table, primary_key, columns = (
+            _SIMPLE_UPDATE_SPECS[item.resource_type]
+        )
+
+        values = _validate_simple_update(
+            item,
+            values_type=values_type,
+            columns=columns,
+        )
+
+        updates = tuple(
+            (
+                columns[change.field],
+                getattr(values, change.field),
+                change.before,
+            )
+            for change in item.changes
+        )
+
+        return _execute_metadata_update(
+            connection,
+            item,
+            table=table,
+            primary_key=primary_key,
+            updates=updates,
+        )
+    
+    values = _validate_site_update(item)
+
+    updates: list[tuple[str, object, object]] = []
+
+    for change in item.changes:
+        after = getattr(values, change.field)
+        before = change.before
+
+        if change.field == "parent":
+            after = (
+                None if after is None else context.resolve(after)
+            )
+            before = (
+                None if before is None else context.resolve(before)
+            )
+
+        updates.append(
+            (
+                _SITE_UPDATE_COLUMNS[change.field],
+                after,
+                before,
+            )
+        )
+
+    return _execute_metadata_update(
+        connection,
+        item,
+        table="sites",
+        primary_key="site_id",
+        updates=tuple(updates),
     )
 
