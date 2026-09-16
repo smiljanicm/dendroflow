@@ -3,9 +3,11 @@ from psycopg import sql
 from ..plan import (
     PlanAction,
     ResolvedLocationTypeValues,
+    ResolvedLocationValues,
     ResolvedPlanItem,
     ResolvedSensorModelValues,
     ResolvedSensorTypeValues,
+    ResolvedSensorValues,
     ResolvedSiteValues,
     ResolvedVariableValues,
 )
@@ -62,6 +64,21 @@ _SENSOR_MODEL_UPDATE_COLUMNS = {
     "manufacturer": "manufacturer",
     "model": "model",
     "sensor_type": "sensor_type_id",
+}
+
+_SENSOR_UPDATE_COLUMNS = {
+    "serial_number": "serial_number",
+    "description": "description",
+    "sensor_model": "sensor_model_id",
+}
+
+_LOCATION_UPDATE_COLUMNS = {
+    "site": "site_id",
+    "location_type": "location_type_id",
+    "latitude": "latitude",
+    "longitude": "longitude",
+    "height_above_ground": "height_above_ground",
+    "azimuth": "azimuth",
 }
 
 def _validate_site_update(
@@ -278,6 +295,72 @@ def update_metadata_item(
 ) -> ApplyItemResult:
     """Persist one resolved METADATA UPDATE item."""
 
+    if item.resource_type == "location":
+        values = _validate_metadata_update(
+            item,
+            values_type=ResolvedLocationValues,
+            columns=_LOCATION_UPDATE_COLUMNS,
+        )
+
+        updates = []
+
+        for change in item.changes:
+            after = getattr(values, change.field)
+            before = change.before
+
+            if change.field in {"site", "location_type"}:
+                after = context.resolve(after)
+                before = context.resolve(before)
+
+            updates.append(
+                (
+                    _LOCATION_UPDATE_COLUMNS[change.field],
+                    after,
+                    before,
+                )
+            )
+
+        return _execute_metadata_update(
+            connection,
+            item,
+            table="locations",
+            primary_key="location_id",
+            updates=tuple(updates),
+        )
+
+    if item.resource_type == "sensor":
+        values = _validate_metadata_update(
+            item,
+            values_type=ResolvedSensorValues,
+            columns=_SENSOR_UPDATE_COLUMNS,
+        )
+
+        updates = []
+
+        for change in item.changes:
+            after = getattr(values, change.field)
+            before = change.before
+
+            if change.field == "sensor_model":
+                after = context.resolve(after)
+                before = context.resolve(before)
+
+            updates.append(
+                (
+                    _SENSOR_UPDATE_COLUMNS[change.field],
+                    after,
+                    before,
+                )
+            )
+
+        return _execute_metadata_update(
+            connection,
+            item,
+            table="sensors",
+            primary_key="sensor_id",
+            updates=tuple(updates),
+        )
+    
     if item.resource_type == "sensor_model":
         values = _validate_metadata_update(
             item,
