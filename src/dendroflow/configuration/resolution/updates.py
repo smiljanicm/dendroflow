@@ -379,6 +379,20 @@ def resolve_deployment_updates(
         if not changes:
             continue
 
+        if valid_to is not None and valid_to <= valid_from:
+            errors.append(
+                PlanError(
+                    code=PlanErrorCode.CONFLICT,
+                    resource_type="deployment",
+                    source_path=f"{source_path}.set",
+                    message=(
+                        "deployment valid_to must be later "
+                        "than valid_from"
+                    ),
+                )
+            )
+            continue
+
         items.append(
             ResolvedPlanItem(
                 plan_id=source_path,

@@ -187,12 +187,13 @@ begins.
 The database remains authoritative if concurrent changes invalidate a
 previously checked plan.
 
-Before whole-plan apply orchestration, deployment planning needs
-follow-up work to:
+Deployment UPDATE resolution rejects final intervals whose end is not
+later than their start.
 
-- Reject invalid final UPDATE intervals during planning.
-- Compare against other updates' final states when checking existing
-  deployment overlaps.
+Overlap checks compare final CREATE and UPDATE values against each
+other and against unchanged persisted deployments. Persisted snapshots
+of deployments updated by the plan are excluded from the existing-history
+check because their final values are checked in the planned-state check.
 
 Execution ordering must also account for immediate database constraints,
 including plans that close an old deployment and create its successor.

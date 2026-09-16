@@ -1,4 +1,7 @@
+from dataclasses import replace
 from datetime import datetime, timezone
+
+import pytest
 
 from dendroflow.configuration.plan import (
     ExistingRef,
@@ -2254,3 +2257,177 @@ def test_location_update_rejects_unresolved_planned_location_type():
     assert errors[0].resource_type == "location"
     assert errors[0].source_path == "updates.locations[0]"
 
+
+@pytest.mark.parametrize(
+    "successor_action",
+    [PlanAction.CREATE, PlanAction.UPDATE],
+    ids=["create-successor", "update-successor"],
+)
+@pytest.mark.parametrize(
+    "reverse_order",
+    [False, True],
+    ids=["closing-first", "successor-first"],
+)
+@pytest.mark.parametrize(
+    "overlaps",
+    [False, True],
+    ids=["adjacent", "overlapping"],
+)
+def test_deployment_overlap_uses_final_updated_states(
+    successor_action,
+    reverse_order,
+    overlaps,
+):
+    january = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    february = datetime(2025, 2, 1, tzinfo=timezone.utc)
+    march = datetime(2025, 3, 1, tzinfo=timezone.utc)
+    june = datetime(2025, 6, 1, tzinfo=timezone.utc)
+
+    closing = _deployment_update_item(
+        "updates.deployments[0]",
+        41,
+        valid_from=january,
+        valid_to=march,
+    )
+    closing = replace(
+        closing,
+        changes=(
+            FieldChange(
+                field="valid_to",
+                before=june,
+                after=march,
+            ),
+        ),
+    )
+
+    existing = (
+        ExistingDeploymentState(
+            deployment_id=41,
+            sensor_id=11,
+            variable_id=31,
+            valid_from=january,
+            valid_to=june,
+        ),
+    )
+
+    successor_start = february if overlaps else march
+
+    if successor_action == PlanAction.CREATE:
+        successor = _deployment_create_item(
+            "deployments[0]",
+            location_id=22,
+            valid_from=successor_start,
+            valid_to=None,
+        )
+    else:
+        successor = _deployment_update_item(
+            "updates.deployments[1]",
+            42,
+            location_id=22,
+            valid_from=successor_start,
+            valid_to=None,
+        )
+        successor = replace(
+            successor,
+            changes=(
+                FieldChange(
+                    field="valid_from",
+                    before=june,
+                    after=successor_start,
+                    identity_change=True,
+                ),
+            ),
+        )
+        existing += (
+            ExistingDeploymentState(
+                deployment_id=42,
+                sensor_id=11,
+                variable_id=31,
+                valid_from=june,
+                valid_to=None,
+            ),
+        )
+
+    items = (closing, successor)
+    if reverse_order:
+        items = tuple(reversed(items))
+
+    errors = collect_plan_consistency_errors(
+        ResolvedPlan(metadata_items=items),
+        existing_deployments=existing,
+    )
+
+    if overlaps:
+        assert len(errors) == 1
+        assert errors[0].code == PlanErrorCode.CONFLICT
+        assert errors[0].resource_type == "deployment"
+        assert errors[0].source_path == items[1].source_path
+        assert errors[0].message == (
+            "deployment validity interval "
+            "overlaps another planned "
+            "deployment for the same "
+            "sensor and variable"
+        )
+    else:
+        assert errors == ()
+
+
+def test_deployment_update_keeps_unchanged_history_checks():
+    january = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    march = datetime(2025, 3, 1, tzinfo=timezone.utc)
+    june = datetime(2025, 6, 1, tzinfo=timezone.utc)
+
+    closing = _deployment_update_item(
+        "updates.deployments[0]",
+        41,
+        valid_from=january,
+        valid_to=march,
+    )
+    closing = replace(
+        closing,
+        changes=(
+            FieldChange(
+                field="valid_to",
+                before=june,
+                after=march,
+            ),
+        ),
+    )
+    successor = _deployment_create_item(
+        "deployments[0]",
+        location_id=22,
+        valid_from=march,
+        valid_to=None,
+    )
+
+    existing = (
+        ExistingDeploymentState(
+            deployment_id=41,
+            sensor_id=11,
+            variable_id=31,
+            valid_from=january,
+            valid_to=june,
+        ),
+        ExistingDeploymentState(
+            deployment_id=42,
+            sensor_id=11,
+            variable_id=31,
+            valid_from=june,
+            valid_to=None,
+        ),
+    )
+
+    errors = collect_plan_consistency_errors(
+        ResolvedPlan(metadata_items=(closing, successor)),
+        existing_deployments=existing,
+    )
+
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+    assert errors[0].resource_type == "deployment"
+    assert errors[0].source_path == successor.source_path
+    assert errors[0].message == (
+        "deployment validity interval "
+        "overlaps an existing deployment "
+        "for the same sensor and variable"
+    )

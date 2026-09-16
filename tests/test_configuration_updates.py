@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+import pytest
+
 from dendroflow.configuration import metadata
 from dendroflow.configuration.metadata import MetadataRow
 from dendroflow.configuration.models import ConfigModel
@@ -2430,4 +2432,144 @@ def test_sensor_model_change_to_current_model_is_noop(
 
     assert items == ()
     assert errors == ()
+
+
+@pytest.mark.parametrize(
+    "set_values",
+    [
+        {"valid_to": "2025-04-01T00:00:00Z"},
+        {"valid_to": "2025-03-31T00:00:00Z"},
+        {"valid_from": "2025-05-01T00:00:00Z"},
+        {"valid_from": "2025-05-02T00:00:00Z"},
+        {
+            "valid_from": "2025-06-01T00:00:00Z",
+            "valid_to": "2025-06-01T00:00:00Z",
+        },
+        {
+            "valid_from": "2025-06-02T00:00:00Z",
+            "valid_to": "2025-06-01T00:00:00Z",
+        },
+    ],
+    ids=[
+        "end-equals-existing-start",
+        "end-before-existing-start",
+        "start-equals-existing-end",
+        "start-after-existing-end",
+        "both-equal",
+        "both-reversed",
+    ],
+)
+def test_deployment_update_rejects_invalid_final_interval(
+    monkeypatch,
+    set_values,
+):
+    row = _deployment_row(
+        valid_to=datetime(
+            2025,
+            5,
+            1,
+            tzinfo=timezone.utc,
+        ),
+    )
+    config = _deployment_update_config(set_values)
+
+    monkeypatch.setattr(
+        metadata,
+        "find_deployments",
+        lambda **kwargs: (row,),
+    )
+
+    items, errors = resolve_deployment_updates(config)
+
+    assert items == ()
+    assert len(errors) == 1
+    assert errors[0].code == PlanErrorCode.CONFLICT
+    assert errors[0].resource_type == "deployment"
+    assert errors[0].source_path == "updates.deployments[0].set"
+    assert errors[0].message == (
+        "deployment valid_to must be later than valid_from"
+    )
+
+
+@pytest.mark.parametrize(
+    "new_valid_to",
+    [
+        datetime(
+            2025,
+            7,
+            1,
+            tzinfo=timezone.utc,
+        ),
+        None,
+    ],
+    ids=[
+        "move-both-boundaries",
+        "move-start-and-clear-end",
+    ],
+)
+def test_deployment_update_validates_final_interval_after_all_changes(
+    monkeypatch,
+    new_valid_to,
+):
+    old_valid_from = datetime(
+        2025,
+        4,
+        1,
+        tzinfo=timezone.utc,
+    )
+    old_valid_to = datetime(
+        2025,
+        5,
+        1,
+        tzinfo=timezone.utc,
+    )
+    new_valid_from = datetime(
+        2025,
+        6,
+        1,
+        tzinfo=timezone.utc,
+    )
+
+    row = _deployment_row(
+        valid_from=old_valid_from,
+        valid_to=old_valid_to,
+    )
+    config = _deployment_update_config(
+        {
+            "valid_from": new_valid_from,
+            "valid_to": new_valid_to,
+        }
+    )
+
+    monkeypatch.setattr(
+        metadata,
+        "find_deployments",
+        lambda **kwargs: (row,),
+    )
+
+    items, errors = resolve_deployment_updates(config)
+
+    assert errors == ()
+    assert len(items) == 1
+
+    item = items[0]
+
+    assert item.action == PlanAction.UPDATE
+    assert item.database_id == row.database_id
+    assert item.values.valid_from == new_valid_from
+    assert item.values.valid_to == new_valid_to
+    assert item.changes == (
+        FieldChange(
+            field="valid_from",
+            before=old_valid_from,
+            after=new_valid_from,
+            identity_change=True,
+        ),
+        FieldChange(
+            field="valid_to",
+            before=old_valid_to,
+            after=new_valid_to,
+            identity_change=False,
+        ),
+    )
 

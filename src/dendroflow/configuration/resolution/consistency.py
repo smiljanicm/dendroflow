@@ -185,6 +185,13 @@ def _collect_existing_deployment_overlap_errors(
 ) -> list[PlanError]:
     errors: list[PlanError] = []
 
+    updated_deployment_ids = {
+        item.database_id
+        for item in plan.metadata_items
+        if item.resource_type == "deployment"
+        and item.action == PlanAction.UPDATE
+    }
+
     for item in plan.metadata_items:
         if item.resource_type != "deployment":
             continue
@@ -211,11 +218,10 @@ def _collect_existing_deployment_overlap_errors(
             continue
 
         for existing in existing_deployments:
-            # An UPDATE must not conflict with its own persisted row.
-            if (
-                item.action == PlanAction.UPDATE
-                and item.database_id == existing.deployment_id
-            ):
+            # Final UPDATE values are checked against other planned
+            # deployments by _collect_deployment_overlap_errors().
+            # Their persisted snapshots are no longer final states.
+            if existing.deployment_id in updated_deployment_ids:
                 continue
 
             if existing.sensor_id != sensor.database_id:
