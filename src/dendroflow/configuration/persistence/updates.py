@@ -4,6 +4,7 @@ from ..plan import (
     PlanAction,
     ResolvedLocationTypeValues,
     ResolvedPlanItem,
+    ResolvedSensorModelValues,
     ResolvedSensorTypeValues,
     ResolvedSiteValues,
     ResolvedVariableValues,
@@ -55,6 +56,12 @@ _SIMPLE_UPDATE_SPECS = {
         "variable_id",
         _VARIABLE_UPDATE_COLUMNS,
     ),
+}
+
+_SENSOR_MODEL_UPDATE_COLUMNS = {
+    "manufacturer": "manufacturer",
+    "model": "model",
+    "sensor_type": "sensor_type_id",
 }
 
 def _validate_site_update(
@@ -115,13 +122,13 @@ def _validate_site_update(
     return item.values
 
 
-def _validate_simple_update(
+def _validate_metadata_update(
     item: ResolvedPlanItem,
     *,
     values_type: type,
     columns: dict[str, str],
 ) -> object:
-    """Validate a simple-resource UPDATE before database access."""
+    """Validate a METADATA UPDATE before database access."""
 
     resource_type = item.resource_type
 
@@ -271,12 +278,45 @@ def update_metadata_item(
 ) -> ApplyItemResult:
     """Persist one resolved METADATA UPDATE item."""
 
+    if item.resource_type == "sensor_model":
+        values = _validate_metadata_update(
+            item,
+            values_type=ResolvedSensorModelValues,
+            columns=_SENSOR_MODEL_UPDATE_COLUMNS,
+        )
+
+        updates = []
+
+        for change in item.changes:
+            after = getattr(values, change.field)
+            before = change.before
+
+            if change.field == "sensor_type":
+                after = context.resolve(after)
+                before = context.resolve(before)
+
+            updates.append(
+                (
+                    _SENSOR_MODEL_UPDATE_COLUMNS[change.field],
+                    after,
+                    before,
+                )
+            )
+
+        return _execute_metadata_update(
+            connection,
+            item,
+            table="sensor_models",
+            primary_key="sensor_model_id",
+            updates=tuple(updates),
+        )
+    
     if item.resource_type in _SIMPLE_UPDATE_SPECS:
         values_type, table, primary_key, columns = (
             _SIMPLE_UPDATE_SPECS[item.resource_type]
         )
 
-        values = _validate_simple_update(
+        values = _validate_metadata_update(
             item,
             values_type=values_type,
             columns=columns,
