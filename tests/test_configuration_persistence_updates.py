@@ -476,6 +476,26 @@ def test_site_update_propagates_database_failure():
     assert len(connection.calls) == 1
 
 
+def test_site_update_propagates_fetch_failure():
+    failure = RuntimeError("result fetch failed")
+
+    class FailingFetchConnection(FakeUpdateConnection):
+        def fetchone(self):
+            raise failure
+
+    connection = FailingFetchConnection()
+
+    with pytest.raises(RuntimeError) as caught:
+        update_metadata_item(
+            connection,
+            _site_update(),
+            ApplyContext(),
+        )
+
+    assert caught.value is failure
+    assert len(connection.calls) == 1
+
+
 @pytest.mark.parametrize(
     "returned_row",
     [
@@ -535,6 +555,21 @@ def test_site_update_rejects_unexpected_returned_id(
             "unsupported METADATA update resource type",
         ),
         (
+            {"resource_type": "location_label"},
+            ValueError,
+            "unsupported METADATA update resource type",
+        ),
+        (
+            {"resource_type": "interface"},
+            ValueError,
+            "unsupported METADATA update resource type",
+        ),
+        (
+            {"resource_type": "unknown"},
+            ValueError,
+            "unsupported METADATA update resource type",
+        ),
+        (
             {"values": object()},
             TypeError,
             "requires ResolvedSiteValues",
@@ -590,5 +625,3 @@ def test_metadata_update_rejects_invalid_input_before_sql(
         )
 
     assert connection.calls == []
-
-

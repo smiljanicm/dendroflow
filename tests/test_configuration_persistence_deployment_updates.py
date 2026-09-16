@@ -188,6 +188,8 @@ def test_deployment_update_persists_timestamp_change(
         'RETURNING "deployment_id"'
     )
     assert params == (after, 81, before)
+    assert params[0] is after
+    assert params[2] is before
 
 
 def test_deployment_update_persists_validity_interval():

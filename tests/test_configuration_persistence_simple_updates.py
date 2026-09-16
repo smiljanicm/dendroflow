@@ -197,8 +197,28 @@ def test_location_type_update_writes_and_guards_both_fields():
             TypeError,
             "requires ResolvedLocationTypeValues",
         ),
-        (
+                (
             {"database_id": 0},
+            ValueError,
+            "positive integer database_id",
+        ),
+        (
+            {"database_id": -1},
+            ValueError,
+            "positive integer database_id",
+        ),
+        (
+            {"database_id": True},
+            ValueError,
+            "positive integer database_id",
+        ),
+        (
+            {"database_id": 1.5},
+            ValueError,
+            "positive integer database_id",
+        ),
+        (
+            {"database_id": "21"},
             ValueError,
             "positive integer database_id",
         ),
