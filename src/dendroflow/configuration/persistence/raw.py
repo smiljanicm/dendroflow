@@ -3,9 +3,13 @@ from collections.abc import Mapping
 from psycopg.types.json import Jsonb
 
 from ..plan import (
+    ExistingRef,
     PlanAction,
+    PlannedRef,
     ResolvedFileValues,
+    ResolvedInterfaceValues,
     ResolvedPlanItem,
+    ResourceRef,
 )
 from .context import ApplyContext
 from .models import ApplyItemResult
@@ -28,6 +32,9 @@ def create_raw_item(
 
     if item.resource_type == "file":
         return _create_file(connection, item, context)
+
+    if item.resource_type == "interface":
+        return _create_interface(connection, item, context)
 
     raise ValueError(
         "unsupported RAW CREATE resource type: "
@@ -87,6 +94,87 @@ def _create_file(
     )
 
     return result
+
+
+def _create_interface(
+    connection: object,
+    item: ResolvedPlanItem,
+    context: ApplyContext,
+) -> ApplyItemResult:
+    if not isinstance(item.values, ResolvedInterfaceValues):
+        raise TypeError(
+            "interface CREATE requires ResolvedInterfaceValues"
+        )
+
+    values = item.values
+
+    file_id = _resolve_interface_reference(
+        values.file,
+        "file",
+        context,
+    )
+    deployment_id = _resolve_interface_reference(
+        values.deployment,
+        "deployment",
+        context,
+    )
+
+    row = connection.execute(
+        """
+        INSERT INTO sensor_file_interfaces (
+            file_id,
+            deployment_id,
+            values_column,
+            timestamp_column,
+            unit
+        )
+        VALUES (%s, %s, %s, %s, %s)
+        RETURNING interface_id
+        """,
+        (
+            file_id,
+            deployment_id,
+            values.values_column,
+            values.timestamp_column,
+            values.unit,
+        ),
+    ).fetchone()
+
+    database_id = _returned_database_id(row)
+
+    result = ApplyItemResult(
+        plan_id=item.plan_id,
+        resource_type=item.resource_type,
+        action=item.action,
+        database_id=database_id,
+    )
+
+    context.register(
+        plan_id=item.plan_id,
+        resource_type=item.resource_type,
+        database_id=database_id,
+    )
+
+    return result
+
+
+def _resolve_interface_reference(
+    reference: ResourceRef,
+    expected_type: str,
+    context: ApplyContext,
+) -> int:
+    if not isinstance(reference, (ExistingRef, PlannedRef)):
+        raise TypeError(
+            f"interface {expected_type} requires a resource reference"
+        )
+
+    if reference.resource_type != expected_type:
+        raise ValueError(
+            f"interface {expected_type} requires "
+            f"resource type {expected_type}"
+        )
+
+    return context.resolve(reference)
 
 
 def _returned_database_id(row: object) -> int:
