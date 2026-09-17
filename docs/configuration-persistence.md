@@ -1,11 +1,11 @@
 # Configuration persistence
 
-This document describes the implemented METADATA CREATE and UPDATE
-writers and their boundary with configuration planning.
+This document describes METADATA CREATE and UPDATE writers, preparation,
+execution ordering, and the public transaction-owning apply function.
 
-Whole-plan apply orchestration, transaction management, and RAW
-persistence are separate work. The individual writers do not constitute
-a complete configuration-apply workflow.
+METADATA-only plans can be applied through `apply_metadata_plan()`.
+RAW persistence and combined METADATA/RAW orchestration remain separate
+work.
 
 ## Planning and persistence
 
@@ -278,5 +278,78 @@ Database failures and stale UPDATE guards remain authoritative during
 execution.
 
 Unit tests establish dependency construction, ordering, and rejection
-behavior. Transaction ownership, execution, and real-database
-verification are separate parts of apply orchestration.
+behavior. The execution layer consumes this schedule, and the public
+apply function owns the connection and transaction described below.
+
+## Public METADATA apply
+
+```python
+from dendroflow.configuration.persistence import apply_metadata_plan
+
+result = apply_metadata_plan(
+    plan,
+    confirm_identity_changes=False,
+)
+```
+
+`apply_metadata_plan()` accepts a METADATA-only resolved plan.
+Preparation and confirmation checks complete before connecting.
+Plans containing RAW items are rejected.
+
+Each call creates a fresh `ApplyContext`. Plans containing CREATE or
+UPDATE operations use a dedicated `dendroflow_metadata` connection.
+All scheduled writes execute within that connection's transaction.
+
+The function returns SUCCESS with METADATA COMMITTED only after the
+connection context exits successfully. RAW is NOT_REQUIRED.
+Item results follow original plan order, regardless of execution order.
+
+Empty and REUSE-only plans do not open a database connection.
+They return SUCCESS with both stages NOT_REQUIRED. REUSE results
+contain the supplied existing IDs; they do not verify current database
+state.
+
+Preparation, connection, execution, and commit errors propagate.
+Execution errors leave the connection context exceptionally, causing
+transaction rollback. The function does not return a failure result
+or retry automatically.
+
+A commit error can leave the outcome uncertain, for example if the
+connection is lost during commit. Callers must establish database state
+before deciding whether another apply attempt is appropriate.
+
+The internal `execute_metadata_preparation()` function does not own
+transactions. Its returned item results describe executed operations,
+not committed changes.
+
+## PostgreSQL integration verification
+
+The integration tests use the public apply function and inspect
+database state through separate connections.
+
+They cover:
+
+- Committed CREATE, UPDATE, and REUSE results.
+- Parent creation before a dependent child.
+- Original-order result reporting.
+- Unique site-code release before acquisition.
+- Rollback of earlier INSERT and UPDATE operations after a stale guard.
+- Rollback after PostgreSQL unique and check violations.
+
+Tests use unique site codes and clean up their fixture rows.
+They require a local development METADATA database with migrations
+applied and the normal DendroFlow connection settings configured.
+
+Run explicitly:
+
+```bash
+DENDROFLOW_INTEGRATION=1 pytest -q \
+  tests/integration/test_configuration_apply.py
+```
+
+Without that environment variable, these tests are skipped.
+
+These cases verify representative METADATA transaction behavior.
+They do not establish concurrent-execution guarantees, uncertain
+commit recovery, deployment exclusion-constraint behavior, or
+cross-database atomicity.
