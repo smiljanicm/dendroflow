@@ -1,11 +1,12 @@
 # Configuration persistence
 
-This document describes METADATA CREATE and UPDATE writers, preparation,
-execution ordering, and the public transaction-owning apply function.
+This document describes METADATA and RAW configuration persistence,
+including writers, preparation, execution ordering, and public
+transaction-owning apply functions.
 
-METADATA-only plans can be applied through `apply_metadata_plan()`.
-RAW persistence and combined METADATA/RAW orchestration remain separate
-work.
+METADATA-only plans use `apply_metadata_plan()`.
+RAW-only plans use `apply_raw_plan()`.
+Combined METADATA/RAW orchestration remains separate work.
 
 ## Planning and persistence
 
@@ -19,7 +20,7 @@ identity correction is appropriate.
 An UPDATE represents corrected metadata for the same resource and
 preserves its database ID.
 
-## Supported resources
+## Supported METADATA resources
 
 | Resource | Table | Primary key | CREATE | UPDATE |
 | --- | --- | --- | --- | --- |
@@ -322,7 +323,7 @@ The internal `execute_metadata_preparation()` function does not own
 transactions. Its returned item results describe executed operations,
 not committed changes.
 
-## PostgreSQL integration verification
+## METADATA PostgreSQL integration verification
 
 The integration tests use the public apply function and inspect
 database state through separate connections.
@@ -353,3 +354,131 @@ These cases verify representative METADATA transaction behavior.
 They do not establish concurrent-execution guarantees, uncertain
 commit recovery, deployment exclusion-constraint behavior, or
 cross-database atomicity.
+
+## RAW configuration persistence
+
+RAW configuration persistence supports these resources:
+
+| Resource | Table | Primary key | Supported actions |
+| --- | --- | --- | --- |
+| file | files | file_id | CREATE, REUSE |
+| interface | sensor_file_interfaces | interface_id | CREATE, REUSE |
+
+RAW UPDATE is not supported. Conflicting existing configuration is
+reported during resolution rather than silently overwritten.
+
+### Writers
+
+`create_raw_item(connection, item, context)` persists one CREATE item.
+
+File creation stores the supplied filepath, timestamp timezone,
+timestamp format, and reader configuration. The top-level reader
+mapping is copied to a dictionary and adapted to JSONB; nested values
+must be JSON-serializable.
+
+Interface creation resolves file and deployment references before
+executing SQL. Both references must have the expected resource type.
+
+Each writer executes one INSERT with RETURNING, validates the generated
+ID, registers it in the context, and returns an `ApplyItemResult`.
+Writers do not connect, commit, roll back, or retry.
+
+A duplicate filepath or duplicate `(file_id, values_column)` remains
+a database error. CREATE does not become REUSE automatically.
+
+### Preparation and execution
+
+`prepare_raw_plan()` runs preflight checks without database access.
+It validates supported actions, values classes, IDs, unique plan IDs,
+and relationship references.
+
+New files execute before interfaces that reference them. Ordering
+selects the earliest original item whose dependencies are ready.
+Results retain original RAW plan order.
+
+REUSE items perform no SQL and cannot depend on planned resources.
+Their supplied IDs are not revalidated against current database state.
+
+By default, preparation rejects METADATA items and planned deployment
+references.
+
+Internal combined preparation can explicitly enable METADATA
+dependencies. Planned deployments must target matching METADATA CREATE
+items. Their plan IDs are recorded in `required_metadata_plan_ids`.
+
+`execute_raw_preparation()` checks all required deployment registrations
+before any RAW writes. It executes CREATE items and produces REUSE
+results without managing transactions.
+
+A registration does not prove that METADATA committed. The combined
+orchestrator must supply IDs from committed METADATA work and validate
+the METADATA stage separately.
+
+### Public RAW apply
+
+```python
+from dendroflow.configuration.persistence import apply_raw_plan
+
+result = apply_raw_plan(plan)
+```
+
+`apply_raw_plan()` accepts RAW-only CREATE/REUSE plans.
+Interfaces may reference files created in the same plan, but deployment
+references must be existing references. METADATA items are rejected.
+
+Preparation completes before connecting. Each call uses a fresh
+context. Plans requiring writes use one owned `dendroflow_raw`
+transaction.
+
+Successful write plans return SUCCESS, RAW COMMITTED, and METADATA
+NOT_REQUIRED only after the connection context exits successfully.
+
+Empty and REUSE-only plans do not connect. They return SUCCESS with
+both stages NOT_REQUIRED.
+
+Errors propagate without automatic retries. Execution failures roll
+back the RAW transaction. A commit error may leave its outcome uncertain;
+callers must establish database state before deciding on another attempt.
+
+### Configuration and ingestion boundary
+
+Registration does not read the physical file or require it to exist.
+It does not create file versions, ingestion runs, or observations.
+
+A new filepath can be registered as a new file. Changed contents at an
+existing filepath are handled by ingestion's file-version tracking.
+Changed reader settings remain configuration conflicts until a RAW
+UPDATE contract is introduced.
+
+RAW enforces its file foreign key. It has no cross-database foreign key
+for deployment IDs, and RAW apply does not query METADATA to verify
+existing deployments. Resolution supplies those references; concurrent
+METADATA changes are not prevented by the RAW transaction.
+
+### RAW PostgreSQL integration verification
+
+The integration tests cover:
+
+- Committed file and interface rows with original-order results.
+- JSONB reader-configuration round-trip.
+- Reading an actual CSV through the stored ingestion configuration.
+- Adding an interface while reusing existing configuration.
+- Rollback after duplicate filepath and interface errors.
+- Rollback after a file foreign-key violation.
+
+Tests create a committed METADATA deployment fixture, inspect RAW state
+through separate connections, and clean up their own rows. RAW cleanup
+precedes METADATA cleanup.
+
+Run against local development databases with METADATA and RAW migrations
+applied and normal DendroFlow connection settings configured:
+
+```bash
+DENDROFLOW_INTEGRATION=1 pytest -q \
+  tests/integration/test_configuration_raw_apply.py
+```
+
+Without the opt-in environment variable, these tests are skipped.
+
+These tests do not establish cross-database atomicity, concurrent-change
+protection, or recovery from an uncertain commit outcome.
