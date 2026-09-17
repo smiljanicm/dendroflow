@@ -14,6 +14,10 @@ from ..plan import (
     ResolvedSiteValues,
     ResolvedVariableValues,
 )
+from .constraints import (
+    metadata_deployment_dependencies,
+    metadata_unique_dependencies,
+)
 from .models import ApplyError, ApplyErrorCode
 from .ordering import (
     metadata_reference_dependencies,
@@ -38,7 +42,7 @@ _METADATA_VALUE_TYPES = {
 class MetadataPreparation:
     """Original items and their prepared execution order.
 
-    Constraint-sensitive ordering is added separately.
+    Includes reference, unique-key, and deployment-interval dependencies.
     """
 
     items: tuple[ResolvedPlanItem, ...]
@@ -135,6 +139,14 @@ def prepare_metadata_plan(
             seen_updates.add(target)
 
     dependencies = metadata_reference_dependencies(plan.metadata_items)
+
+    for constraint_dependencies in (
+        metadata_unique_dependencies(plan.metadata_items),
+        metadata_deployment_dependencies(plan.metadata_items),
+    ):
+        for plan_id, required_items in constraint_dependencies.items():
+            dependencies[plan_id].update(required_items)
+
     execution_items = order_metadata_items(
         plan.metadata_items,
         dependencies,

@@ -207,3 +207,76 @@ and exception propagation.
 Fake-connection tests do not establish real PostgreSQL constraint
 behavior, concurrency behavior, or whole-plan rollback guarantees.
 Those require database integration tests.
+
+## METADATA apply preparation and ordering
+
+`prepare_metadata_plan()` checks the METADATA-only apply boundary
+without opening a database connection.
+
+It runs apply preflight, rejects RAW items, validates supported
+resource/action/value combinations, checks existing resource IDs,
+and rejects duplicate plan IDs and duplicate UPDATE targets.
+
+Relationship checks require each planned reference to target a
+matching METADATA CREATE item. REUSE relationships must refer to
+existing resources.
+
+The returned `MetadataPreparation` contains:
+
+- `items`: the original plan order.
+- `execution_items`: the order determined by dependencies.
+- `requires_writes`: whether CREATE or UPDATE items are present.
+
+Preparation does not execute SQL or report a committed apply result.
+
+### Dependency rules
+
+The execution graph combines three kinds of dependency:
+
+1. A CREATE precedes an operation that requires its generated ID.
+2. An UPDATE releasing a unique key precedes an operation acquiring
+   that previous key.
+3. A deployment UPDATE precedes another operation whose final state
+   overlaps its previous sensor, variable, and interval.
+
+Previous constraint values are reconstructed from resolved final values
+and recorded `FieldChange.before` values.
+
+Unique-key dependencies cover site codes, location types, sensor types,
+variables, manufacturer/model pairs, and sensor-model/serial-number
+pairs. Composite comparisons include unchanged key components.
+
+Deployment comparisons use sensor and variable, regardless of location.
+Intervals are half-open, so adjacent boundaries do not overlap.
+Overlapping final CREATE/UPDATE deployment states are rejected.
+
+REUSE items do not acquire or release constraint values. An updated
+row's REUSE snapshot therefore does not override its final UPDATE state.
+
+### Deterministic order and cycles
+
+At each step, ordering selects the earliest original item whose
+dependencies have been satisfied.
+
+Reference and constraint dependencies are combined before ordering.
+A dependency cycle raises `PLAN_NOT_APPLICABLE` and identifies blocked
+items. The blocked list can include dependants of the cycle.
+
+The scheduler does not split UPDATE statements, introduce temporary
+values, or defer database constraints to resolve cycles.
+
+Original item order remains available separately for result reporting.
+
+### Guarantees and limits
+
+Preparation uses the resolved plan and performs no database lookups.
+It does not replace resolution, writer validation, or PostgreSQL
+constraints.
+
+Concurrent database changes can still invalidate a prepared schedule.
+Database failures and stale UPDATE guards remain authoritative during
+execution.
+
+Unit tests establish dependency construction, ordering, and rejection
+behavior. Transaction ownership, execution, and real-database
+verification are separate parts of apply orchestration.
