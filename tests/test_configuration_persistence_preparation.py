@@ -64,6 +64,7 @@ def test_metadata_preparation_accepts_empty_plan():
 
     assert prepared.items == ()
     assert prepared.requires_writes is False
+    assert prepared.execution_items == ()
 
 
 def test_metadata_preparation_accepts_reuse_only_plan():
@@ -86,6 +87,7 @@ def test_metadata_preparation_accepts_reuse_only_plan():
 
     assert prepared.items == items
     assert prepared.requires_writes is False
+    assert prepared.execution_items == items
 
 
 def test_metadata_preparation_preserves_mixed_plan_order():

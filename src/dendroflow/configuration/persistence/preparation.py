@@ -15,6 +15,10 @@ from ..plan import (
     ResolvedVariableValues,
 )
 from .models import ApplyError, ApplyErrorCode
+from .ordering import (
+    metadata_reference_dependencies,
+    order_metadata_items,
+)
 from .preflight import validate_plan_for_apply
 
 _METADATA_VALUE_TYPES = {
@@ -32,12 +36,13 @@ _METADATA_VALUE_TYPES = {
 
 @dataclass(frozen=True)
 class MetadataPreparation:
-    """Validated METADATA items in original plan order.
+    """Original items and their prepared execution order.
 
-    Dependency ordering and execution are separate steps.
+    Constraint-sensitive ordering is added separately.
     """
 
     items: tuple[ResolvedPlanItem, ...]
+    execution_items: tuple[ResolvedPlanItem, ...]
 
     @property
     def requires_writes(self) -> bool:
@@ -129,5 +134,13 @@ def prepare_metadata_plan(
 
             seen_updates.add(target)
 
-    return MetadataPreparation(items=plan.metadata_items)
+    dependencies = metadata_reference_dependencies(plan.metadata_items)
+    execution_items = order_metadata_items(
+        plan.metadata_items,
+        dependencies,
+    )
 
+    return MetadataPreparation(
+        items=plan.metadata_items,
+        execution_items=execution_items,
+    )  
