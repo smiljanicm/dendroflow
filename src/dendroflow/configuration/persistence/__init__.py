@@ -1,4 +1,4 @@
-from .apply import apply_metadata_plan
+from .apply import apply_metadata_plan, apply_raw_plan
 from .context import ApplyContext
 from .models import (
     ApplyError,
@@ -19,5 +19,6 @@ __all__ = [
     "ApplyStageStatus",
     "ApplyStatus",
     "apply_metadata_plan",
+    "apply_raw_plan",
     "validate_plan_for_apply",
 ]
