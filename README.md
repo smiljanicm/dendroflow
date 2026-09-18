@@ -21,6 +21,6 @@ The initial development focuses on:
 - [Data architecture](docs/data-architecture.md) — overall METADATA, RAW, and CLEAN data model
 - [RAW ingestion](docs/raw-ingestion.md) — file versioning, provenance, batching, retries, and resume behavior
 - [Database migrations](docs/database-migrations.md) — migration structure and execution
-- [Configuration persistence](docs/configuration-persistence.md) — METADATA CREATE/UPDATE writer contracts, optimistic guards, and apply boundaries
+- [Configuration persistence](docs/configuration-persistence.md) — METADATA and RAW persistence, public apply functions, transaction outcomes, and recovery boundaries
 
 DendroFlow is under active development. Documentation is updated as individual architectural components reach a stable implementation.

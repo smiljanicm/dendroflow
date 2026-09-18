@@ -4,9 +4,13 @@ This document describes METADATA and RAW configuration persistence,
 including writers, preparation, execution ordering, and public
 transaction-owning apply functions.
 
-METADATA-only plans use `apply_metadata_plan()`.
-RAW-only plans use `apply_raw_plan()`.
-Combined METADATA/RAW orchestration remains separate work.
+METADATA-only plans can use `apply_metadata_plan()`.
+RAW-only plans can use `apply_raw_plan()`.
+`apply_plan()` supports combined plans and either stage on its own,
+with explicit execution-failure outcomes.
+
+Combined apply uses sequential METADATA and RAW transactions.
+It does not provide atomicity across the two databases.
 
 ## Planning and persistence
 
@@ -176,7 +180,7 @@ Writers do not commit, roll back, manage transaction boundaries, or
 schedule dependent operations. The caller must provide the intended
 transaction context and handle failures.
 
-## Deployment constraints and remaining work
+## Deployment constraints
 
 PostgreSQL requires `valid_to > valid_from` when an end is present.
 It also prevents overlapping deployment intervals for the same sensor
@@ -196,8 +200,9 @@ other and against unchanged persisted deployments. Persisted snapshots
 of deployments updated by the plan are excluded from the existing-history
 check because their final values are checked in the planned-state check.
 
-Execution ordering must also account for immediate database constraints,
+METADATA preparation accounts for immediate database constraints,
 including plans that close an old deployment and create its successor.
+The dependency rules are described below.
 
 ## Verification boundary
 
@@ -482,3 +487,205 @@ Without the opt-in environment variable, these tests are skipped.
 
 These tests do not establish cross-database atomicity, concurrent-change
 protection, or recovery from an uncertain commit outcome.
+
+## Public combined apply
+
+```python
+from dendroflow.configuration.persistence import apply_plan
+
+result = apply_plan(
+    plan,
+    confirm_identity_changes=False,
+)
+```
+
+`apply_plan()` accepts combined, METADATA-only, RAW-only, empty, and
+REUSE-only resolved plans.
+
+Both stages are prepared before any database connection is opened.
+Preparation checks confirmation requirements, supported operations,
+plan-ID uniqueness, references, and execution dependencies.
+
+Preparation failures propagate directly. They do not produce an
+`ApplyExecutionError`, and no writes have started.
+
+### Execution sequence
+
+When writes are required:
+
+1. METADATA executes on an owned `dendroflow_metadata` connection.
+2. METADATA commit must return successfully before RAW can proceed.
+3. Required newly created deployment IDs are transferred from committed
+   METADATA results into a fresh RAW context.
+4. RAW executes on an owned `dendroflow_raw` connection and commits
+   separately.
+
+Each stage uses a fresh context. Uncommitted or uncertain METADATA
+results are never used to start dependent RAW writes.
+
+If METADATA fails to finish cleanly, RAW writes do not start. This
+includes a connection-close failure after METADATA commit succeeded.
+
+Stages containing only REUSE items require no connection or transaction.
+Their supplied IDs are returned without checking current database state.
+
+Results retain original plan order: METADATA items followed by RAW
+items. Execution order may differ because of dependencies.
+
+### Stage outcomes
+
+| Stage status | Meaning |
+| --- | --- |
+| NOT_REQUIRED | The stage requires no write transaction; it may contain completed REUSE operations. |
+| NOT_STARTED | Required writes were not attempted because the preceding stage did not finish cleanly. |
+| COMMITTED | Commit returned successfully, even if subsequent connection cleanup failed. |
+| FAILED | Connection failed before execution, or execution failed and rollback completed successfully. |
+| UNKNOWN | Commit raised an error, or rollback failed; the transaction outcome is uncertain. |
+
+A commit error remains UNKNOWN even if a subsequent rollback succeeds.
+That rollback cannot establish whether the earlier commit took effect.
+
+### Overall outcomes
+
+| Overall status | Meaning |
+| --- | --- |
+| SUCCESS | Every required write stage committed; stages without writes completed without a transaction. |
+| FAILED | A required stage failed without an earlier committed write stage. |
+| PARTIAL | METADATA committed, but required RAW writes failed or were not started. |
+| UNKNOWN | At least one stage has an uncertain transaction outcome. |
+
+UNKNOWN takes precedence over PARTIAL. For example, committed METADATA
+followed by an uncertain RAW commit produces UNKNOWN.
+
+Result items include only acknowledged committed stage results and
+completed REUSE operations. Items from failed, unstarted, or uncertain
+write stages are excluded.
+
+A stage that requires writes reports none of its item results if that
+transaction fails or becomes uncertain, including REUSE items within
+that stage.
+
+### Execution errors and cleanup
+
+Ordinary connection, execution, commit, rollback, and close failures
+raise `ApplyExecutionError`. Its `result` describes the known database
+outcome.
+
+```python
+from dendroflow.configuration.persistence import (
+    ApplyExecutionError,
+    apply_plan,
+)
+
+try:
+    result = apply_plan(plan)
+except ApplyExecutionError as error:
+    outcome = error.result
+    # Record outcome.status, both stage statuses, and outcome.items.
+    # Inspect database state before deciding how to recover.
+    raise
+```
+
+Exception chaining retains the underlying failure. The internal stage
+error also retains rollback and connection-close errors separately.
+
+An exception does not imply that writes rolled back. If commit
+succeeded and connection close then failed, the stage remains COMMITTED.
+An `ApplyExecutionError` can therefore carry an overall SUCCESS result
+when all required work committed before cleanup failed.
+
+Process-control exceptions, such as KeyboardInterrupt and SystemExit,
+propagate directly rather than being converted into structured apply
+outcomes.
+
+The standalone `apply_metadata_plan()` and `apply_raw_plan()` functions
+retain their existing exception behavior. They do not provide the
+combined function's structured execution-failure contract.
+
+### Recovery boundaries
+
+There is no cross-database transaction, automatic compensation, or
+automatic retry.
+
+If RAW fails after METADATA committed, METADATA remains persisted.
+Recovery requires inspecting the outcome and current database state,
+then resolving and reviewing a new plan.
+
+Do not replay the original CREATE plan blindly: previously committed
+resources may now need REUSE operations.
+
+For UNKNOWN outcomes, establish database state before deciding what to
+apply next. Missing item results do not prove that uncertain writes
+were rolled back.
+
+For SUCCESS accompanied by a cleanup error, committed work must not
+be repeated solely because an exception was raised.
+
+## Combined PostgreSQL integration verification
+
+The combined integration tests inspect persisted state through separate
+connections and cover:
+
+- Successful METADATA and RAW commits.
+- Dependency ordering and original-order result reporting.
+- Transfer of a newly committed deployment ID into a RAW interface.
+- Invalid RAW preparation preventing both stages from starting.
+- METADATA unique-constraint failure rolling back METADATA and preventing
+  RAW execution.
+- Duplicate RAW file and interface failures rolling back RAW while
+  preserving committed METADATA and reporting PARTIAL.
+
+Fixtures use unique identifiers and clean up RAW before METADATA.
+
+Run all three configuration apply integration modules against local
+development databases with migrations and connection settings prepared:
+
+```bash
+DENDROFLOW_INTEGRATION=1 pytest -q \
+  tests/integration/test_configuration_apply.py \
+  tests/integration/test_configuration_raw_apply.py \
+  tests/integration/test_configuration_combined_apply.py
+```
+
+Without the opt-in environment variable, these tests are skipped.
+
+Unit tests exercise uncertain commit, rollback, and cleanup outcomes
+using controlled connection failures. The PostgreSQL integration cases
+do not establish network-failure recovery, concurrent-execution
+guarantees, or cross-database atomicity.
+
+## Phase E scope and deferred work
+
+Phase E implements the persistence boundary for resolved configuration
+plans:
+
+- METADATA CREATE and supported guarded UPDATE operations.
+- RAW file and interface CREATE operations.
+- REUSE results without writes.
+- Preparation, validation, and dependency ordering.
+- Standalone METADATA and RAW apply entry points.
+- Combined METADATA-before-RAW apply with explicit transaction outcomes.
+- Unit tests and opt-in PostgreSQL integration tests.
+
+This completes the implementation scope of Phase E. It does not mean
+that the remaining CONFIG phases or the complete user-facing workflow
+are finished.
+
+### Future RAW UPDATE work
+
+RAW UPDATE remains outside the completed Phase E scope. Whether it
+belongs in the MVP will be decided separately.
+
+The future-work list includes:
+
+- Changing a filepath while preserving file_id and its associated
+  provenance history.
+- Changing reader configuration or timestamp settings, including the
+  effect on interpretation and re-ingestion of existing data.
+- Updating interfaces, including column mappings, units, and deployment
+  associations, with explicit provenance rules.
+- Defining identity, confirmation, stale-plan protection, and recovery
+  behavior for these updates.
+
+Registering a new filepath currently creates a separate file resource.
+It does not rename an existing registration or transfer its history.
