@@ -3,6 +3,7 @@ from .context import ApplyContext
 from .models import (
     ApplyError,
     ApplyErrorCode,
+    ApplyExecutionError,
     ApplyItemResult,
     ApplyResult,
     ApplyStageStatus,
@@ -14,6 +15,7 @@ __all__ = [
     "ApplyContext",
     "ApplyError",
     "ApplyErrorCode",
+    "ApplyExecutionError",
     "ApplyItemResult",
     "ApplyResult",
     "ApplyStageStatus",
