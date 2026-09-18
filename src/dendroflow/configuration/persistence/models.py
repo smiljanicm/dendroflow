@@ -27,72 +27,6 @@ class ApplyStatus(str, Enum):
     SUCCESS = "success"
     FAILED = "failed"
     PARTIAL = "partial"
-
-
-class ApplyStageStatus(str, Enum):
-    NOT_REQUIRED = "not_required"
-    COMMITTED = "committed"
-    FAILED = "failed"
-
-
-@dataclass(frozen=True)
-class ApplyItemResult:
-    plan_id: str
-    resource_type: str
-    action: PlanAction
-    database_id: int
-
-    def __post_init__(self) -> None:
-        if self.database_id <= 0:
-            raise ValueError(
-                "database_id must be positive"
-            )
-
-
-@dataclass(frozen=True)
-class ApplyResult:
-    """Database outcome of an apply attempt.
-
-    Stage combinations follow METADATA-before-RAW execution.
-
-    Coordinators must include only item results from completed stages:
-    committed writes and completed REUSE operations. Results from failed,
-    unstarted, or uncertain stages must not be reported as applied.
-    """
-
-    status: ApplyStatus
-    metadata_status: ApplyStageStatus
-    raw_status: ApplyStageStatus
-    items: tuple[ApplyItemResult, ...] = ()
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.status, ApplyStatus):
-            raise TypeError("status must be an ApplyStatus")
-
-        if not isinstance(self.metadata_status, ApplyStageStatus):
-            raise TypeError(
-                "metadata_status must be an ApplyStageStatus"
-            )
-
-        if not isinstance(self.raw_status, ApplyStageStatus):
-            raise TypeError(
-                "raw_status must be an ApplyStageStatus"
-            )
-
-        stages = (self.metadata_status, self.raw_status)
-
-        if stages not in _VALID_STAGE_STATES[self.status]:
-            raise ValueError(
-                "invalid apply outcome: "
-                f"status={self.status.value}, "
-                f"metadata={self.metadata_status.value}, "
-                f"raw={self.raw_status.value}"
-            )
-
-class ApplyStatus(str, Enum):
-    SUCCESS = "success"
-    FAILED = "failed"
-    PARTIAL = "partial"
     UNKNOWN = "unknown"
 
 
@@ -174,6 +108,61 @@ _VALID_STAGE_STATES = {
         }
     ),
 }
+
+
+@dataclass(frozen=True)
+class ApplyItemResult:
+    plan_id: str
+    resource_type: str
+    action: PlanAction
+    database_id: int
+
+    def __post_init__(self) -> None:
+        if self.database_id <= 0:
+            raise ValueError(
+                "database_id must be positive"
+            )
+
+
+@dataclass(frozen=True)
+class ApplyResult:
+    """Database outcome of an apply attempt.
+
+    Stage combinations follow METADATA-before-RAW execution.
+
+    Coordinators must include only item results from completed stages:
+    committed writes and completed REUSE operations. Results from failed,
+    unstarted, or uncertain stages must not be reported as applied.
+    """
+
+    status: ApplyStatus
+    metadata_status: ApplyStageStatus
+    raw_status: ApplyStageStatus
+    items: tuple[ApplyItemResult, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.status, ApplyStatus):
+            raise TypeError("status must be an ApplyStatus")
+
+        if not isinstance(self.metadata_status, ApplyStageStatus):
+            raise TypeError(
+                "metadata_status must be an ApplyStageStatus"
+            )
+
+        if not isinstance(self.raw_status, ApplyStageStatus):
+            raise TypeError(
+                "raw_status must be an ApplyStageStatus"
+            )
+
+        stages = (self.metadata_status, self.raw_status)
+
+        if stages not in _VALID_STAGE_STATES[self.status]:
+            raise ValueError(
+                "invalid apply outcome: "
+                f"status={self.status.value}, "
+                f"metadata={self.metadata_status.value}, "
+                f"raw={self.raw_status.value}"
+            )
 
 
 class ApplyExecutionError(RuntimeError):
