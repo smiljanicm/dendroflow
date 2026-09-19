@@ -1,11 +1,14 @@
 import argparse
 import sys
+from pathlib import Path
 
 from dendroflow.database import DATABASES
 from dendroflow.migrations import migrate_database
 
+from .configuration import validate
 
-def migrate() -> int:
+
+def migrate(_args: argparse.Namespace) -> int:
     """Apply pending migrations to all DendroFlow databases."""
     for database in DATABASES:
         print(f"Migrating {database}...")
@@ -46,6 +49,24 @@ def main(argv: list[str] | None = None) -> int:
     )
     migration_parser.set_defaults(handler=migrate)
 
-    args = parser.parse_args(argv)
-    return args.handler()
+    config_parser = commands.add_parser(
+        "config",
+        help="Validate and manage configuration.",
+    )
+    config_commands = config_parser.add_subparsers(
+        dest="config_command",
+        required=True,
+    )
+    validation_parser = config_commands.add_parser(
+        "validate",
+        help="Validate a YAML configuration without database access.",
+    )
+    validation_parser.add_argument(
+        "path",
+        type=Path,
+        help="Path to the YAML configuration file.",
+    )
+    validation_parser.set_defaults(handler=validate)
 
+    args = parser.parse_args(argv)
+    return args.handler(args)
