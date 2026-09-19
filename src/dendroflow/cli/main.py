@@ -5,7 +5,7 @@ from pathlib import Path
 from dendroflow.database import DATABASES
 from dendroflow.migrations import migrate_database
 
-from .configuration import validate
+from .configuration import plan, validate
 
 
 def migrate(_args: argparse.Namespace) -> int:
@@ -67,6 +67,17 @@ def main(argv: list[str] | None = None) -> int:
         help="Path to the YAML configuration file.",
     )
     validation_parser.set_defaults(handler=validate)
+
+    planning_parser = config_commands.add_parser(
+        "plan",
+        help="Preview resolved operations without database writes.",
+    )
+    planning_parser.add_argument(
+        "path",
+        type=Path,
+        help="Path to the YAML configuration file.",
+    )
+    planning_parser.set_defaults(handler=plan)
 
     args = parser.parse_args(argv)
     return args.handler(args)
