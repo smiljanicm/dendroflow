@@ -23,7 +23,7 @@ from dendroflow.configuration.persistence.models import (
 from dendroflow.configuration.resolution.orchestration import resolve_config
 
 from .confirmation import review_for_apply
-from .reporting import format_apply_result, format_plan
+from .reporting import format_apply_error, format_apply_result, format_plan
 
 
 def _format_location(location: tuple[str | int, ...]) -> str:
@@ -144,7 +144,7 @@ def apply(args: argparse.Namespace) -> int:
         )
     except ApplyExecutionError as error:
         print(format_apply_result(error.result))
-        print(f"Apply did not finish cleanly: {error}", file=sys.stderr)
+        print(format_apply_error(error), file=sys.stderr)
         return {
             ApplyStatus.PARTIAL: 4,
             ApplyStatus.UNKNOWN: 5,

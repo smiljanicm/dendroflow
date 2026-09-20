@@ -3,10 +3,14 @@ from dataclasses import fields
 from datetime import datetime
 
 from dendroflow.configuration.persistence.models import (
+    ApplyError,
+    ApplyErrorCode,
+    ApplyExecutionError,
     ApplyItemResult,
     ApplyResult,
     ApplyStatus,
 )
+from dendroflow.configuration.persistence.transactions import StageTransactionError
 from dendroflow.configuration.plan import (
     ExistingRef,
     PlanAction,
@@ -150,3 +154,58 @@ def format_apply_result(result: ApplyResult) -> str:
         ])
     return "\n".join(lines)
 
+
+def _describe_error(error: BaseException) -> str:
+    label = type(error).__name__
+    if isinstance(error, ApplyError):
+        label += f" [{error.code.value.upper()}]"
+    return f"{label}: {error}"
+
+
+def format_apply_error(error: ApplyExecutionError) -> str:
+    """Explain an execution failure without changing its database outcome."""
+    lines = [f"Apply did not finish cleanly: {error}"]
+    cleanup_lines: list[str] = []
+    cleanup_ids: set[int] = set()
+    seen = {id(error)}
+    cause = error.__cause__
+    stale = False
+
+    while cause is not None and id(cause) not in seen:
+        seen.add(id(cause))
+        if isinstance(cause, StageTransactionError):
+            for label, secondary in (
+                ("Rollback error", cause.rollback_error),
+                ("Close error", cause.close_error),
+            ):
+                if secondary is not None:
+                    cleanup_lines.append(f"{label}: {_describe_error(secondary)}")
+                    cleanup_ids.add(id(secondary))
+        elif id(cause) not in cleanup_ids:
+            lines.append(f"Cause: {_describe_error(cause)}")
+
+        if isinstance(cause, ApplyError) and cause.code == ApplyErrorCode.STALE_PLAN:
+            stale = True
+        cause = cause.__cause__
+
+    lines.extend(cleanup_lines)
+
+    if error.result.status == ApplyStatus.SUCCESS:
+        lines.append(
+            "Required database work completed; cleanup failed. "
+            "Do not repeat committed operations because of this error."
+        )
+    elif error.result.status == ApplyStatus.FAILED:
+        lines.append(
+            "No write stage is reported as committed. "
+            "Resolve the cause, then build and review a fresh plan."
+        )
+
+    if stale:
+        lines.append(
+            "The plan is stale. Resolve current database state and review "
+            "a new plan before retrying."
+        )
+
+    lines.append("No automatic retry was attempted.")
+    return "\n".join(lines)
