@@ -12,11 +12,18 @@ from dendroflow.configuration import (
     load_config,
     validate_config,
 )
+from dendroflow.configuration.persistence import apply_plan
 from dendroflow.configuration.persistence.combined_preparation import prepare_plan
-from dendroflow.configuration.persistence.models import ApplyError
+from dendroflow.configuration.persistence.models import (
+    ApplyError,
+    ApplyErrorCode,
+    ApplyExecutionError,
+    ApplyStatus,
+)
 from dendroflow.configuration.resolution.orchestration import resolve_config
 
-from .reporting import format_plan
+from .confirmation import review_for_apply
+from .reporting import format_apply_result, format_plan
 
 
 def _format_location(location: tuple[str | int, ...]) -> str:
@@ -107,4 +114,44 @@ def plan(args: argparse.Namespace) -> int:
     if resolved.requires_confirmation:
         print("Confirmation is still required before applying this plan.")
     print("This preview does not reserve database state.")
+    return 0
+
+
+def apply(args: argparse.Namespace) -> int:
+    """Apply the exact resolved plan shown during review."""
+    config = _load_validated_config(args.path)
+    if config is None:
+        return 2
+
+    try:
+        resolved = resolve_config(config)
+    except (psycopg.Error, RuntimeError) as error:
+        print(f"Configuration planning failed: {error}", file=sys.stderr)
+        return 1
+
+    review_code = review_for_apply(
+        resolved,
+        yes=args.yes,
+        confirm_identity_changes=args.confirm_identity_changes,
+    )
+    if review_code != 0:
+        return review_code
+
+    try:
+        result = apply_plan(
+            resolved,
+            confirm_identity_changes=args.confirm_identity_changes,
+        )
+    except ApplyExecutionError as error:
+        print(format_apply_result(error.result))
+        print(f"Apply did not finish cleanly: {error}", file=sys.stderr)
+        return {
+            ApplyStatus.PARTIAL: 4,
+            ApplyStatus.UNKNOWN: 5,
+        }.get(error.result.status, 1)
+    except ApplyError as error:
+        print(f"Apply blocked [{error.code.value.upper()}]: {error}", file=sys.stderr)
+        return 3 if error.code == ApplyErrorCode.CONFIRMATION_REQUIRED else 2
+
+    print(format_apply_result(result))
     return 0
