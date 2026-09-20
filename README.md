@@ -22,5 +22,6 @@ The initial development focuses on:
 - [RAW ingestion](docs/raw-ingestion.md) — file versioning, provenance, batching, retries, and resume behavior
 - [Database migrations](docs/database-migrations.md) — migration structure and execution
 - [Configuration persistence](docs/configuration-persistence.md) — METADATA and RAW persistence, public apply functions, transaction outcomes, and recovery boundaries
+- [Configuration CLI](docs/configuration-cli.md) — validation, planning, confirmation, apply outcomes, and recovery
 
 DendroFlow is under active development. Documentation is updated as individual architectural components reach a stable implementation.
