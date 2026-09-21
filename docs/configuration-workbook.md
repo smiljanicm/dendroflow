@@ -3,8 +3,9 @@
 ## Status
 
 G1 defines workbook format version 1, its sheet/column schema, and header checks.
-It does not yet read or write XLSX files, query databases, compare cell values,
-generate YAML, or provide workbook CLI commands. Those arrive in G2-G5.
+G2.a adds an empty XLSX template writer using openpyxl. Database export,
+workbook reading, cell comparison, YAML generation, and workbook CLI commands
+remain for subsequent G2-G5 steps.
 The rules below are requirements for those implementations, not claims that
 header validation already enforces them.
 
@@ -194,7 +195,8 @@ appear as changes back to workbook values. Explicit review remains required.
 
 ## Acceptance and remaining implementation
 
-G2 adds workbook export/template generation; G3 reads and validates cells;
+G2.a adds template generation; remaining G2 steps add database export.
+G3 reads and validates cells;
 G4 compares against databases and writes YAML; G5 adds CLI commands; G6 verifies
 the complete round trip. Unsupported legacy database values need clear export
 or conversion diagnostics, not silent normalization that changes their meaning.
@@ -210,3 +212,52 @@ Run the G1 contract tests with:
 ```bash
 pytest -q tests/test_configuration_workbook_schema.py
 ```
+
+## Empty template generation (G2.a)
+
+Install the updated package dependencies:
+
+```bash
+python -m pip install -e ".[dev]"
+```
+
+The Python entry point writes a new workbook without database access:
+
+```python
+from dendroflow.configuration.workbook.writer import write_workbook_template
+
+path = write_workbook_template(
+    "control-template.xlsx",
+    target_environment="local-dev",
+)
+```
+
+The explicit environment label identifies the intended database pair. G2.a does
+not look it up or verify a connection; automatic environment configuration is
+still pending. Labels must contain 1-128 characters after trimming and no
+embedded control characters. Do not supply credentials or connection strings.
+
+The result contains the guide, workbook information, and all resource headers.
+It has a new workbook UUID, `scope=template`, an empty `site_ids` array, and no
+export timestamp or resource records. Text columns have Excel text formatting,
+headers remain visible while scrolling, and role/boolean/reader-type dropdowns
+help users enter values. Dropdowns do not replace future Python validation.
+Changing formatting or pasting cells can override Excel's text formatting;
+check leading zeros and use value-only paste when entering identifiers.
+
+The output must use an `.xlsx` extension and an existing parent directory.
+Existing files are never overwritten. Serialization finishes in memory before
+opening the output file; an error during serialization creates no output.
+Filesystem write failures can still leave an incomplete new file.
+
+This step does not implement Excel import or database change planning. Inspect
+the generated workbook in Excel or LibreOffice; do not expect edits to be
+applied yet. Continue with a fresh database export once that capability exists.
+
+```bash
+pytest -q tests/test_configuration_workbook_writer.py
+```
+
+Tests reopen saved XLSX files to check structure, metadata, formatting, dropdown
+ranges, literal text handling, and file-creation error behaviour. Desktop Excel
+interaction and workbook layout should also be checked locally.
