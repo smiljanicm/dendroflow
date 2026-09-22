@@ -102,6 +102,7 @@ def test_text_formats_preserve_ids_references_and_timestamp_entry(tmp_path):
                 if column.kind in {
                     CellKind.ID, CellKind.TEXT, CellKind.TIMESTAMP,
                     CellKind.JSON, CellKind.REFERENCE,
+                    CellKind.NUMBER,
                 }:
                     assert sheet.cell(2, index).number_format == "@"
                     letter = get_column_letter(index)

@@ -5,9 +5,9 @@
 G1 defines workbook format version 1, its sheet/column schema, and header checks.
 G2.a adds an empty XLSX template writer using openpyxl. G2.b reads stored
 configuration into pandas DataFrames. G2.c selects the export scope and prepares
-workbook values and references. Populated workbook writing, workbook reading,
-cell comparison, YAML generation, and workbook CLI commands remain for
-subsequent G2-G5 steps.
+workbook values and references. G2.d saves populated XLSX workbooks with export
+metadata. Workbook reading, cell comparison, YAML generation, and workbook CLI
+commands remain for G3-G5.
 The rules below are requirements for those implementations, not claims that
 header validation already enforces them.
 
@@ -63,8 +63,10 @@ It is independent of pandas and the eventual XLSX library.
 
 Do not store passwords or connection strings in a workbook. The environment
 identifier must match the configured import target before IDs are interpreted.
-It is provenance, not an authentication or permission mechanism. G2 must define
-where this identifier is configured; it must not be inferred solely from the
+It is provenance, not an authentication or permission mechanism. G2 Python
+writers require the caller to supply this label; they do not verify it against
+connection settings. G5 must bind the label to the configured database pair and
+use it consistently for export and import. It must not be inferred solely from
 database names, which can be identical on different servers.
 
 ## Export scope and shared resources
@@ -147,7 +149,13 @@ The workbook describes desired field values, not a sparse update form.
   not separately expressible in this format; diagnose unsupported legacy states
   rather than silently altering them during export/import.
 - Numbers must be finite. Zero and FALSE are values, not blanks. Coordinate
-  pairs and range constraints follow the existing CONFIG models.
+  pairs and range constraints follow the existing CONFIG models. G2.d writes
+  coordinates, height and azimuth as decimal text, preserving stored numeric
+  precision through Excel's 15-significant-digit numeric limit. Keep text
+  formatting and use a dot decimal separator; scientific notation is valid.
+  These remain logical NUMBER fields in the schema and Python numbers in the
+  prepared frames. G3 must parse the text back to finite numbers before
+  comparison. Boolean cells remain native Excel booleans.
 - Validity timestamps are ISO 8601 text with an explicit offset, for example
   `2026-01-01T00:00:00Z`. Export UTC; compare instants after normalization.
   Reject naive Excel date cells instead of guessing a timezone. The RAW
@@ -197,9 +205,9 @@ appear as changes back to workbook values. Explicit review remains required.
 
 ## Acceptance and remaining implementation
 
-G2.a adds template generation, G2.b adds database reading, and G2.c prepares the
-export scope and workbook values. Remaining G2 work writes populated workbooks
-and supplies their export metadata.
+G2 is implemented through Python APIs: template generation, database reading,
+scope/value preparation, and populated writing with export metadata. Desktop
+editing and the complete import/compare round trip still need acceptance checks.
 G3 reads and validates cells;
 G4 compares against databases and writes YAML; G5 adds CLI commands; G6 verifies
 the complete round trip. Unsupported legacy database values need clear export
@@ -248,6 +256,7 @@ headers remain visible while scrolling, and role/boolean/reader-type dropdowns
 help users enter values. Dropdowns do not replace future Python validation.
 Changing formatting or pasting cells can override Excel's text formatting;
 check leading zeros and use value-only paste when entering identifiers.
+Logical NUMBER columns also use text formatting to preserve numeric precision.
 
 The output must use an `.xlsx` extension and an existing parent directory.
 Existing files are never overwritten. Serialization finishes in memory before
@@ -256,7 +265,7 @@ Filesystem write failures can still leave an incomplete new file.
 
 This step does not implement Excel import or database change planning. Inspect
 the generated workbook in Excel or LibreOffice; do not expect edits to be
-applied yet. Continue with a fresh database export once that capability exists.
+applied yet. Use the populated export API below for existing configurations.
 
 ```bash
 pytest -q tests/test_configuration_workbook_writer.py
@@ -395,9 +404,70 @@ does not establish that the whole label history is valid.
 
 This step prepares in-memory workbook values only. It does not compare an edited
 workbook with the database, generate YAML, apply changes or write a populated
-XLSX file. Populated writing and environment/export metadata follow in G2.d.
+XLSX file. Pass its result to the G2.d writer below.
 
 ```bash
 pytest -q tests/test_configuration_workbook_preparation.py
 pytest -q tests/test_configuration_workbook*.py
 ```
+
+## Populated workbook writing (G2.d)
+
+```python
+from pathlib import Path
+
+from dendroflow.configuration.workbook.preparation import prepare_workbook_export
+from dendroflow.configuration.workbook.source import read_configuration_frames
+from dendroflow.configuration.workbook.writer import write_workbook_export
+
+frames = read_configuration_frames()
+export = prepare_workbook_export(frames)  # all records; or site_ids=[actual_site_id]
+path = write_workbook_export(
+    Path.home() / "Downloads" / "dendroflow-control.xlsx",
+    export,
+    target_environment="local-dev",
+)
+print(path)
+```
+
+Use the non-secret environment label agreed for your database pair. The output
+directory must exist and the filename must be new. Preparation can reject legacy
+records that the workbook cannot represent; resolve those diagnostics explicitly
+instead of silently changing database values just to make an export succeed.
+
+The saved workbook contains all eleven resource sheets in schema order, with
+prepared row order, IDs, aliases, roles and relationship references intact.
+Reference rows are shaded grey; filters and frozen headers help navigation.
+Dropdowns and shading are editing aids, not access controls. Empty sheets still
+contain all headers. Nullable values are blank; FALSE remains a boolean value.
+IDs, timestamps, JSON and ordinary strings are literal text, including strings
+beginning with `=` and Excel error-looking text. Numeric fields use decimal text
+as described above, preventing export rounding from creating apparent edits.
+
+Every saved export gets a new UUID, its scope, selected IDs as a JSON array of
+decimal strings, and an aware UTC export timestamp. By default `exported_at`
+records file-generation time. Callers can pass an aware Python `datetime` through
+the `exported_at` keyword; it is normalized to UTC. Neither value establishes an
+atomic database snapshot, reserves database state, or proves workbook freshness.
+
+The writer consumes `WorkbookExport` from preparation without changing its
+frames or opening database connections. It checks its structural boundary
+(sheets, headers, IDs, roles, scope and Excel row limits) and cell storage types
+because callers can mutate the prepared frames. It does not repeat reference
+closure or full CONFIG validation. Pass the unmodified preparation result;
+this API is not an import validator for arbitrary edited frames.
+
+As with templates, existing files are never overwritten. The workbook is
+serialized in memory before the new output file is opened. Serialization errors
+leave no output file; filesystem write errors can leave an incomplete new file.
+No YAML is generated and no database changes are applied by exporting.
+
+```bash
+pytest -q tests/test_configuration_workbook_export.py
+pytest -q tests/test_configuration_workbook*.py
+```
+
+Tests save and reopen actual XLSX files, checking values, metadata, formatting,
+scope, literal text, error handling and input preservation. Also open a local
+export in Excel or LibreOffice to inspect usability. G3-G6 will verify reading,
+comparison and the unchanged-export/no-database-writes acceptance case.
