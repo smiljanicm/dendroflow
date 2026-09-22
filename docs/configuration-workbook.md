@@ -4,9 +4,10 @@
 
 G1 defines workbook format version 1, its sheet/column schema, and header checks.
 G2.a adds an empty XLSX template writer using openpyxl. G2.b reads stored
-configuration into pandas DataFrames. Export scope selection, populated workbook
-writing, workbook reading, cell comparison, YAML generation, and workbook CLI
-commands remain for subsequent G2-G5 steps.
+configuration into pandas DataFrames. G2.c selects the export scope and prepares
+workbook values and references. Populated workbook writing, workbook reading,
+cell comparison, YAML generation, and workbook CLI commands remain for
+subsequent G2-G5 steps.
 The rules below are requirements for those implementations, not claims that
 header validation already enforces them.
 
@@ -196,8 +197,9 @@ appear as changes back to workbook values. Explicit review remains required.
 
 ## Acceptance and remaining implementation
 
-G2.a adds template generation and G2.b adds database reading. Remaining G2 steps
-select the export scope, prepare workbook values, and write populated workbooks.
+G2.a adds template generation, G2.b adds database reading, and G2.c prepares the
+export scope and workbook values. Remaining G2 work writes populated workbooks
+and supplies their export metadata.
 G3 reads and validates cells;
 G4 compares against databases and writes YAML; G5 adds CLI commands; G6 verifies
 the complete round trip. Unsupported legacy database values need clear export
@@ -305,7 +307,7 @@ An export does not reserve database state for a later apply.
 Only configuration tables are queried. Observations, file versions, ingestion
 history, CLEAN tables, and physical source files are not read. All configuration
 rows are loaded into memory at this stage; site filtering and reference closure
-belong to the next export-preparation step. The returned frames are transient
+belong to the G2.c export-preparation step. The returned frames are transient
 export inputs, not stored synchronization baselines.
 
 ```bash
@@ -320,3 +322,82 @@ The opt-in PostgreSQL test runs the real SELECTs, checks the active read-only an
 repeatable-read settings, and verifies the returned frame structure. It creates
 or deletes no fixture records. It does not simulate concurrent writers or prove
 cross-database snapshot consistency.
+
+## Export preparation (G2.c)
+
+```python
+from dendroflow.configuration.workbook.preparation import prepare_workbook_export
+from dendroflow.configuration.workbook.source import read_configuration_frames
+
+source_frames = read_configuration_frames()
+
+all_records = prepare_workbook_export(source_frames)
+selected_sites = prepare_workbook_export(source_frames, site_ids=[2, 3])
+
+print(selected_sites.scope)      # sites
+print(selected_sites.site_ids)   # (2, 3)
+print(selected_sites.frames["sites"])
+```
+
+Replace example IDs with actual IDs in your database. `site_ids=None` selects
+all configuration records, including unreferenced resources. An explicit
+selection must be nonempty and contain positive integer BIGINT IDs. Repeated
+IDs are deduplicated, sorted and checked against the source sites. Descendant
+sites are not selected implicitly.
+
+Preparation performs no database or filesystem IO and leaves input frames
+unchanged. The returned `WorkbookExport` has `scope`, `site_ids`, and fresh
+caller-owned `frames`. Its frame keys, columns and column order match G1.
+Frames include headers even when empty. Their rows are ordered numerically by
+database ID; reordered input rows, columns or dictionary entries give the same
+output. Output frames are mutable and are not stored baselines.
+
+For site-scoped exports, selected sites, locations, full label histories,
+deployments and matching interfaces are `edit` rows. Required ancestor sites,
+location types, sensors, models, sensor types, variables and files are included
+as `reference` rows. A selected ancestor stays editable. A shared file does not
+pull in interfaces belonging to other sites. In an `all` export every included
+row has role `edit`, subject to the existing per-field update restrictions.
+
+The preparation step:
+
+- Checks the eleven source frames, exact source columns and unique positive
+  primary IDs before selecting records.
+- Follows selected records' references to include their required targets, and
+  rejects missing targets and cycles in site ancestry.
+- Writes database IDs as decimal strings and deterministic aliases such as
+  `site_2`, `sensor_model_40` and `deployment_80`. Relationship cells use those
+  aliases rather than raw database IDs.
+- Marks one earliest label per location, ordered by UTC instant then label ID.
+  A selected location without label history is an error.
+- Converts aware timestamps to ISO 8601 UTC text while preserving microseconds.
+  Nullable values remain None; zero, FALSE and leading-zero text remain values.
+- Splits RAW `reader_config` into `reader_type` and JSON `reader_options`.
+  JSON object keys are sorted; array order remains intact. Only the currently
+  supported csv reader and exactly the `reader`/`options` keys are accepted.
+
+Selected cells must be representable without silent changes. Required nulls,
+empty or padded text, non-finite numbers, invalid booleans, naive timestamps,
+unsupported reader settings, non-JSON values, illegal XLSX characters and text
+longer than 32767 characters are errors. The source reader intentionally retains
+legacy values; preparation diagnoses them rather than inventing defaults.
+Unrelated out-of-scope cell values are not validated, but required reference
+rows must also be representable. Formula-like strings remain literal strings;
+the populated XLSX writer must retain literal text handling when saving them.
+
+`WorkbookExportError` reports the first defect with sheet, database ID when
+available, and column. It does not return partial export frames. Invalid
+`site_ids` arguments raise ValueError. Preparation checks representability and
+reference integrity, not every CONFIG semantic constraint. Coordinate/interval
+consistency, overlap checks and eventual plan applicability remain authoritative
+in the subsequent CONFIG validation/planning workflow. Initial-label selection
+does not establish that the whole label history is valid.
+
+This step prepares in-memory workbook values only. It does not compare an edited
+workbook with the database, generate YAML, apply changes or write a populated
+XLSX file. Populated writing and environment/export metadata follow in G2.d.
+
+```bash
+pytest -q tests/test_configuration_workbook_preparation.py
+pytest -q tests/test_configuration_workbook*.py
+```

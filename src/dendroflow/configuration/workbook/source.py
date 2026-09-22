@@ -1,5 +1,7 @@
 """Read stored configuration into DataFrames for workbook export preparation."""
 
+from types import MappingProxyType
+
 import pandas as pd
 from psycopg import sql
 
@@ -55,6 +57,13 @@ _DATABASE_TABLES = (
     ("dendroflow_metadata", _METADATA_TABLES),
     ("dendroflow_raw", _RAW_TABLES),
 )
+
+# Shared with export preparation so its input contract follows the SQL reads.
+SOURCE_COLUMNS = MappingProxyType({
+    sheet: columns
+    for _, tables in _DATABASE_TABLES
+    for sheet, _, columns in tables
+})
 
 
 def read_configuration_frames() -> dict[str, pd.DataFrame]:
