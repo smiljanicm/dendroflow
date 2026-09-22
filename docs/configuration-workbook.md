@@ -3,9 +3,10 @@
 ## Status
 
 G1 defines workbook format version 1, its sheet/column schema, and header checks.
-G2.a adds an empty XLSX template writer using openpyxl. Database export,
-workbook reading, cell comparison, YAML generation, and workbook CLI commands
-remain for subsequent G2-G5 steps.
+G2.a adds an empty XLSX template writer using openpyxl. G2.b reads stored
+configuration into pandas DataFrames. Export scope selection, populated workbook
+writing, workbook reading, cell comparison, YAML generation, and workbook CLI
+commands remain for subsequent G2-G5 steps.
 The rules below are requirements for those implementations, not claims that
 header validation already enforces them.
 
@@ -195,7 +196,8 @@ appear as changes back to workbook values. Explicit review remains required.
 
 ## Acceptance and remaining implementation
 
-G2.a adds template generation; remaining G2 steps add database export.
+G2.a adds template generation and G2.b adds database reading. Remaining G2 steps
+select the export scope, prepare workbook values, and write populated workbooks.
 G3 reads and validates cells;
 G4 compares against databases and writes YAML; G5 adds CLI commands; G6 verifies
 the complete round trip. Unsupported legacy database values need clear export
@@ -261,3 +263,60 @@ pytest -q tests/test_configuration_workbook_writer.py
 Tests reopen saved XLSX files to check structure, metadata, formatting, dropdown
 ranges, literal text handling, and file-creation error behaviour. Desktop Excel
 interaction and workbook layout should also be checked locally.
+
+## Configuration database reading (G2.b)
+
+```python
+from dendroflow.configuration.workbook.source import read_configuration_frames
+
+frames = read_configuration_frames()
+for sheet_name, frame in frames.items():
+    print(sheet_name, len(frame))
+```
+
+This requires the normal DendroFlow connection settings and migrated METADATA
+and RAW databases. It returns eleven caller-owned pandas DataFrames, keyed by
+the resource sheet names from G1. Every frame is present even if its table is
+empty, with explicit columns and rows ordered by primary key.
+
+These frames contain database columns and values, not the final Excel layout:
+
+- Relationships retain integer IDs such as `site_id` and `sensor_model_id`.
+- File rows retain `filepath` and the complete `reader_config` JSON object.
+- `interfaces` reads the `sensor_file_interfaces` table.
+- No `ref`, `row_role`, or `is_initial` values have been assigned yet.
+- All columns use object dtype to preserve large IDs, Python nulls, booleans,
+  timezone-aware timestamps, and JSON values without automatic type inference.
+- Legacy values that cannot be expressed in the workbook contract are retained
+  for later diagnostics. Missing label histories or cross-database deployment
+  references are not silently removed by joins.
+
+One fresh connection is opened for METADATA, then another for RAW. Before data
+queries, each starts a read-only, repeatable-read transaction. Its table queries
+therefore share one database snapshot. Connection contexts finish the transaction
+and close the connection before returning data. Query, conversion, connection,
+or transaction-exit errors propagate; no partial dictionary is returned.
+
+There is no atomic snapshot across METADATA and RAW. Another process can change
+relationships between those reads. Export preparation must detect missing
+referenced records and report them, but cannot detect every concurrent change.
+An export does not reserve database state for a later apply.
+
+Only configuration tables are queried. Observations, file versions, ingestion
+history, CLEAN tables, and physical source files are not read. All configuration
+rows are loaded into memory at this stage; site filtering and reference closure
+belong to the next export-preparation step. The returned frames are transient
+export inputs, not stored synchronization baselines.
+
+```bash
+pytest -q tests/test_configuration_workbook_source.py
+
+DENDROFLOW_INTEGRATION=1 pytest -q \
+  tests/integration/test_configuration_workbook_database.py
+```
+
+Unit tests exercise query routing, value preservation and failure propagation.
+The opt-in PostgreSQL test runs the real SELECTs, checks the active read-only and
+repeatable-read settings, and verifies the returned frame structure. It creates
+or deletes no fixture records. It does not simulate concurrent writers or prove
+cross-database snapshot consistency.
