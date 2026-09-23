@@ -6,8 +6,10 @@ G1 defines workbook format version 1, its sheet/column schema, and header checks
 G2.a adds an empty XLSX template writer using openpyxl. G2.b reads stored
 configuration into pandas DataFrames. G2.c selects the export scope and prepares
 workbook values and references. G2.d saves populated XLSX workbooks with export
-metadata. Workbook reading, cell comparison, YAML generation, and workbook CLI
-commands remain for G3-G5.
+metadata. G3.a reads workbook structure, validates metadata and retains raw cell
+locations/types. Resource cell parsing and relationship validation remain for
+G3.b-G3.c; database comparison, YAML generation, and workbook CLI commands follow
+in G4-G5.
 The rules below are requirements for those implementations, not claims that
 header validation already enforces them.
 
@@ -208,7 +210,8 @@ appear as changes back to workbook values. Explicit review remains required.
 G2 is implemented through Python APIs: template generation, database reading,
 scope/value preparation, and populated writing with export metadata. Desktop
 editing and the complete import/compare round trip still need acceptance checks.
-G3 reads and validates cells;
+G3.a reads structure and metadata; G3.b-G3.c will validate resource cells and
+relationships.
 G4 compares against databases and writes YAML; G5 adds CLI commands; G6 verifies
 the complete round trip. Unsupported legacy database values need clear export
 or conversion diagnostics, not silent normalization that changes their meaning.
@@ -471,3 +474,95 @@ Tests save and reopen actual XLSX files, checking values, metadata, formatting,
 scope, literal text, error handling and input preservation. Also open a local
 export in Excel or LibreOffice to inspect usability. G3-G6 will verify reading,
 comparison and the unchanged-export/no-database-writes acceptance case.
+
+## Workbook structure and metadata reading (G3.a)
+
+```python
+from pathlib import Path
+
+from dendroflow.configuration.workbook.reader import WorkbookReadError, read_workbook
+
+try:
+    document = read_workbook(
+        Path.home() / "Desktop" / "dendroflow-control.xlsx",
+        expected_environment="local-dev",
+    )
+except WorkbookReadError as error:
+    for issue in error.issues:
+        print(issue.sheet, issue.coordinate, issue.message)
+else:
+    print(document.metadata)
+    for sheet_name, rows in document.sheets.items():
+        print(sheet_name, len(rows))
+```
+
+`read_workbook()` accepts an existing `.xlsx` path and expands `~` in string
+paths. It opens the file without modifying it and closes it before returning.
+It uses openpyxl with formula expressions retained, rather than cached results.
+The workbook is loaded in memory; this API is intended for configuration data,
+not measurement tables. It does not connect to databases, evaluate formulas,
+generate YAML or apply changes.
+
+The structural checks require `workbook_info` and all eleven resource sheets,
+including empty ones. `guide` is optional and its content is ignored. Sheet,
+column and metadata-key order may change. Names are exact and case-sensitive;
+missing/unknown sheets, missing/unknown/duplicate headers, non-text headers,
+merged cells outside the guide, chart sheets outside the guide, and populated
+cells without a header are errors. Extra blank formatted columns are ignored.
+Entirely blank or whitespace-only rows are ignored without renumbering surviving
+cells. Hidden sheets and rows are read normally; hiding is not exclusion.
+
+Every metadata key must occur exactly once. Values must satisfy this contract:
+
+- `format_version` is integer 1, not text or a boolean.
+- `workbook_id` is UUID text.
+- `target_environment` is a nonblank label without surrounding whitespace or
+  control characters, at most 128 characters, exactly matching the caller's
+  `expected_environment` label. That argument is mandatory and similarly checked.
+- `scope` is `all`, `sites` or `template`.
+- `site_ids` is a JSON array of unique positive BIGINT decimal strings; it is
+  nonempty only for `sites`. Leading-zero IDs are rejected. Returned IDs are
+  sorted Python integers. Their existence and correspondence to resource rows
+  are checked in later phases, not by this reader.
+- `exported_at` is blank for templates; exports require ISO 8601 UTC text with
+  `T`, seconds, optional microseconds, and `Z` or `+00:00`. Native Excel date
+  cells, naive timestamps and non-UTC offsets are rejected in this metadata field.
+
+Metadata keys, values and headers cannot be formulas or Excel errors. The
+environment check compares explicit labels; it does not verify live connection
+identity or workbook authenticity. Export time does not guarantee freshness.
+
+The result is a `WorkbookDocument` containing parsed `WorkbookMetadata` and
+`sheets`. Each resource sheet maps to a tuple of row dictionaries keyed by schema
+column name. Each entry is a `WorkbookCell` with `sheet`, original Excel
+`coordinate`, raw `value` and openpyxl `data_type`. Sheet and dictionary column
+order follow the schema; resource row order follows the file. Dictionaries are
+caller-owned and mutable. No openpyxl worksheet or live file handle is returned.
+
+For example, `document.sheets["sites"][0]["name"].coordinate` identifies the
+actual cell even after columns or rows have moved. Values such as `000001`,
+`NA`, `NULL`, FALSE, zero, decimal text, whitespace and blank cells are preserved
+without pandas type inference. Raw cells can subsequently become normalized
+DataFrames in G3.b while retaining these locations for diagnostics.
+
+**A successful structural read is not resource validation.** Resource formulas,
+Excel errors, dates, invalid IDs and missing relationships remain represented
+in the raw document. G3.b must reject formulas/errors and parse cells before
+comparison; G3.c checks identities, relationships, roles and initial labels.
+Literal strings beginning with `=` remain distinguishable from Excel formulas.
+Existing CONFIG validation and planning remain necessary before any apply.
+
+`WorkbookReadError.issues` contains sheet/cell diagnostics. Structural defects
+are collected together; metadata value checks report the first invalid value
+after checking key structure. Missing headers/keys or unreadable files may have
+no cell coordinate. No partial document is returned. Invalid caller environment
+arguments raise `ValueError` before reading the file.
+
+```bash
+pytest -q tests/test_configuration_workbook_reader.py
+pytest -q tests/test_configuration_workbook*.py
+```
+
+Tests read saved templates and populated exports, exercise reordered structures,
+hidden and blank rows, corrupt files, metadata failures and raw cell preservation.
+Workbook validation CLI wiring remains for G5.
