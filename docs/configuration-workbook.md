@@ -548,7 +548,7 @@ DataFrames through G3.b while retaining these locations for diagnostics.
 
 **A successful structural read is not resource validation.** Resource formulas,
 Excel errors, dates, invalid IDs and missing relationships remain represented
-in the raw document. Run G3.b to reject formulas/errors and parse cells before
+in the raw document. Run G3.b to check formulas/errors and parse cells before
 comparison; G3.c checks identities, relationships, roles and initial labels.
 Literal strings beginning with `=` remain distinguishable from Excel formulas.
 Existing CONFIG validation and planning remain necessary before any apply.
@@ -609,7 +609,7 @@ Cell parsing follows these rules:
 | Text/reference | Text is trimmed at its edges; case, internal whitespace, Unicode, leading zeros, `NA` and `NULL` remain literal; numbers/dates/booleans are not converted to text |
 | Database ID | Blank for a new row, otherwise positive BIGINT decimal **text** with no leading zeros; returned as an exact Python int |
 | Number | Native Excel int/float or decimal text with a dot separator and optional scientific notation; returned as a finite Python float; booleans, non-finite values, overflow and nonzero values that underflow to zero are rejected |
-| Boolean | Native boolean or case-insensitive TRUE/FALSE text; returned as Python bool; 0/1 and yes/no are rejected |
+| Boolean | Native boolean, case-insensitive TRUE/FALSE text, or a boolean cell containing exactly the constant formula `=TRUE()`/`=FALSE()`; returned as Python bool; 0/1 and yes/no are rejected |
 | Timestamp | ISO 8601 text with `T`, seconds, up to six fractional digits, and `Z` or a signed HH:MM offset; returned as a UTC Python datetime preserving microseconds |
 | JSON | JSON object text becomes a fresh dict; nested arrays retain order and JSON strings retain their contents; duplicate keys at any level, non-finite numbers and scalar/array roots are rejected |
 
@@ -620,8 +620,17 @@ rounded numeric cell as text cannot recover it. Coordinates, height and azimuth
 can accept native numbers, but retain exported decimal text for an unchanged
 round trip.
 
-Formula cells and Excel error cells are rejected before blank handling, including
-in nullable fields. Native Excel date/time cells are rejected rather than given
+Formula cells and Excel error cells are checked before blank handling, including
+in nullable fields. The only formula exception is an exact `=TRUE()` or
+`=FALSE()` in a BOOLEAN column, ignoring case and surrounding whitespace.
+LibreOffice can save native boolean values in this form during an unchanged
+XLSX round trip. The parser recognizes these constants directly; it neither
+evaluates formulas nor reads cached results. Cell references, arguments,
+operators, compound expressions, and constant formulas in other column kinds
+remain errors. A text cell containing `=TRUE()` is still literal text, not a
+boolean; ordinary TRUE/FALSE text remains accepted in boolean columns.
+
+Native Excel date/time cells are rejected rather than given
 an inferred timezone. Literal strings beginning with `=` or looking like
 `#REF!` are retained when their Excel cell type is text. Text must also fit the
 XLSX cell limit and supported character set. No formulas are evaluated.

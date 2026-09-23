@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
+from pandas.testing import assert_frame_equal
 
 from dendroflow.configuration.workbook.parsing import WorkbookParseError, parse_workbook
 from dendroflow.configuration.workbook.preparation import prepare_workbook_export
@@ -300,3 +301,56 @@ def test_parser_does_not_open_files_or_databases(document, monkeypatch):
     monkeypatch.setattr("dendroflow.configuration.workbook.source.connect", fail)
     monkeypatch.setattr("dendroflow.database.connect", fail)
     assert len(parse_workbook(document).frames) == 11
+
+
+@pytest.mark.parametrize(("sheet", "column"), [("variables", "derived"), ("location_labels", "is_initial")])
+@pytest.mark.parametrize(("formula", "expected"), [("=TRUE()", True), ("=false()", False)])
+def test_boolean_constant_formulas_are_normalized(document, sheet, column, formula, expected):
+    assert value_from(document, sheet, column, formula, "f") is expected
+
+
+@pytest.mark.parametrize("formula", [
+    "=A1", "=1=1", "=TRUE()+0", "=IF(A1,TRUE(),FALSE())", "=TRUE(A1)",
+    "=_xlfn.TRUE()", "=TRUE()&FALSE()",
+])
+def test_other_boolean_formulas_are_still_rejected(document, formula):
+    with pytest.raises(WorkbookParseError, match="formulas are not supported"):
+        value_from(document, "variables", "derived", formula, "f")
+
+
+@pytest.mark.parametrize("column", ["name", "latitude", "site_id"])
+def test_boolean_constant_formulas_are_rejected_outside_boolean_columns(document, column):
+    with pytest.raises(WorkbookParseError, match="formulas are not supported"):
+        value_from(document, "sites", column, "=TRUE()", "f")
+
+
+def test_boolean_constant_looking_text_is_not_treated_as_a_formula(document):
+    assert value_from(document, "sites", "name", "=TRUE()", "s") == "=TRUE()"
+    with pytest.raises(WorkbookParseError, match="expected TRUE or FALSE"):
+        value_from(document, "variables", "derived", "=TRUE()", "s")
+
+
+def test_saved_boolean_constant_formulas_preserve_parsed_values(document, tmp_path):
+    # Reproduce Calc's XLSX representation without requiring LibreOffice in CI.
+    document = with_cell(document, "variables", "derived", False)
+    document = with_cell(document, "location_labels", "is_initial", True)
+    path = write_workbook_template(tmp_path / "booleans.xlsx", target_environment="local-dev")
+    workbook = load_workbook(path)
+    try:
+        for name, rows in document.sheets.items():
+            for row in rows:
+                for cell in row.values():
+                    workbook[name][cell.coordinate] = cell.value
+        workbook.save(path)
+        before = parse_workbook(read_workbook(path, expected_environment="local-dev"))
+        workbook["variables"]["E7"] = "=FALSE()"
+        workbook["location_labels"]["H7"] = "=TRUE()"
+        workbook.save(path)
+    finally:
+        workbook.close()
+    raw = read_workbook(path, expected_environment="local-dev")
+    assert raw.sheets["variables"][0]["derived"].data_type == "f"
+    after = parse_workbook(raw)
+    for name in before.frames:
+        assert_frame_equal(before.frames[name], after.frames[name])
+        assert_frame_equal(before.coordinates[name], after.coordinates[name])

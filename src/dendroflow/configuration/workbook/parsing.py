@@ -130,9 +130,14 @@ def _json_object(value: object) -> dict:
 
 
 def _value(cell: WorkbookCell, column: ColumnSpec) -> object:
-    # Check Excel cell type before blanks or coercion: never trust cached
-    # formula values, even for optional fields.
+    # Calc can save literal booleans as TRUE()/FALSE() formulas. Recognize
+    # only these two constants in boolean fields, without using cached results
+    # or evaluating expressions. All other formulas remain invalid.
     if cell.data_type == "f":
+        if column.kind == CellKind.BOOLEAN and isinstance(cell.value, str):
+            constant = cell.value.strip().upper()
+            if constant in {"=TRUE()", "=FALSE()"}:
+                return constant == "=TRUE()"
         raise ValueError("formulas are not supported; enter a literal value")
     if cell.data_type == "e":
         raise ValueError("Excel error cells are not supported")
@@ -165,7 +170,8 @@ def _value(cell: WorkbookCell, column: ColumnSpec) -> object:
 def parse_workbook(document: WorkbookDocument) -> ParsedWorkbook:
     """Parse an unmodified read_workbook result without database or file IO.
 
-    Formula/error/date cells are rejected. Text is trimmed and blanks become
+    Formulas except boolean TRUE()/FALSE() constants, errors and Excel dates
+    are rejected. Text is trimmed and blanks become
     None only for nullable columns. IDs remain exact integers, numeric fields
     become finite floats, and aware timestamp text becomes UTC datetimes.
     Cell failures are collected in schema/row/column order. Full validation,
