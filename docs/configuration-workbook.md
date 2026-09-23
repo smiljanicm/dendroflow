@@ -7,8 +7,9 @@ G2.a adds an empty XLSX template writer using openpyxl. G2.b reads stored
 configuration into pandas DataFrames. G2.c selects the export scope and prepares
 workbook values and references. G2.d saves populated XLSX workbooks with export
 metadata. G3.a reads workbook structure, validates metadata and retains raw cell
-locations/types. Resource cell parsing and relationship validation remain for
-G3.b-G3.c; database comparison, YAML generation, and workbook CLI commands follow
+locations/types. G3.b parses resource cells into typed DataFrames with located
+diagnostics. Relationship validation remains for G3.c; database comparison,
+YAML generation, and workbook CLI commands follow
 in G4-G5.
 The rules below are requirements for those implementations, not claims that
 header validation already enforces them.
@@ -210,8 +211,8 @@ appear as changes back to workbook values. Explicit review remains required.
 G2 is implemented through Python APIs: template generation, database reading,
 scope/value preparation, and populated writing with export metadata. Desktop
 editing and the complete import/compare round trip still need acceptance checks.
-G3.a reads structure and metadata; G3.b-G3.c will validate resource cells and
-relationships.
+G3.a reads structure and metadata; G3.b parses resource cells. G3.c will validate
+identities, relationships and workbook roles.
 G4 compares against databases and writes YAML; G5 adds CLI commands; G6 verifies
 the complete round trip. Unsupported legacy database values need clear export
 or conversion diagnostics, not silent normalization that changes their meaning.
@@ -543,11 +544,11 @@ For example, `document.sheets["sites"][0]["name"].coordinate` identifies the
 actual cell even after columns or rows have moved. Values such as `000001`,
 `NA`, `NULL`, FALSE, zero, decimal text, whitespace and blank cells are preserved
 without pandas type inference. Raw cells can subsequently become normalized
-DataFrames in G3.b while retaining these locations for diagnostics.
+DataFrames through G3.b while retaining these locations for diagnostics.
 
 **A successful structural read is not resource validation.** Resource formulas,
 Excel errors, dates, invalid IDs and missing relationships remain represented
-in the raw document. G3.b must reject formulas/errors and parse cells before
+in the raw document. Run G3.b to reject formulas/errors and parse cells before
 comparison; G3.c checks identities, relationships, roles and initial labels.
 Literal strings beginning with `=` remain distinguishable from Excel formulas.
 Existing CONFIG validation and planning remain necessary before any apply.
@@ -566,3 +567,87 @@ pytest -q tests/test_configuration_workbook*.py
 Tests read saved templates and populated exports, exercise reordered structures,
 hidden and blank rows, corrupt files, metadata failures and raw cell preservation.
 Workbook validation CLI wiring remains for G5.
+
+## Resource cell parsing (G3.b)
+
+```python
+from dendroflow.configuration.workbook.parsing import WorkbookParseError, parse_workbook
+from dendroflow.configuration.workbook.reader import read_workbook
+
+document = read_workbook(
+    "~/Desktop/dendroflow-control.xlsx",
+    expected_environment="local-dev",
+)
+try:
+    parsed = parse_workbook(document)
+except WorkbookParseError as error:
+    for issue in error.issues:
+        print(issue.sheet, issue.coordinate, issue.message)
+else:
+    print(parsed.frames["sites"])
+    print(parsed.coordinates["sites"])
+```
+
+Pass the unmodified result of `read_workbook()`. The parser performs no file or
+database IO and leaves the raw document unchanged. It returns `ParsedWorkbook`
+with the same metadata, eleven value `frames`, and eleven matching `coordinates`
+frames. Each DataFrame uses object dtype, schema column order and a fresh
+positional row index in workbook order; empty sheets still retain their columns.
+This preserves Python integers, None, booleans and aware datetimes without
+pandas converting mixed null/ID columns to floats or null dates to NaT.
+
+For example, `parsed.coordinates["sites"].at[0, "name"]` identifies the physical
+Excel cell that supplied `parsed.frames["sites"].at[0, "name"]`, even if the user
+reordered columns or left blank rows. The returned frames and JSON objects are
+caller-owned and mutable. They are not a stored baseline or an executable plan.
+
+Cell parsing follows these rules:
+
+| Kind | Accepted input and returned value |
+| --- | --- |
+| Blank | None, empty strings and whitespace-only strings become None only for nullable fields; required blanks are errors |
+| Text/reference | Text is trimmed at its edges; case, internal whitespace, Unicode, leading zeros, `NA` and `NULL` remain literal; numbers/dates/booleans are not converted to text |
+| Database ID | Blank for a new row, otherwise positive BIGINT decimal **text** with no leading zeros; returned as an exact Python int |
+| Number | Native Excel int/float or decimal text with a dot separator and optional scientific notation; returned as a finite Python float; booleans, non-finite values, overflow and nonzero values that underflow to zero are rejected |
+| Boolean | Native boolean or case-insensitive TRUE/FALSE text; returned as Python bool; 0/1 and yes/no are rejected |
+| Timestamp | ISO 8601 text with `T`, seconds, up to six fractional digits, and `Z` or a signed HH:MM offset; returned as a UTC Python datetime preserving microseconds |
+| JSON | JSON object text becomes a fresh dict; nested arrays retain order and JSON strings retain their contents; duplicate keys at any level, non-finite numbers and scalar/array roots are rejected |
+
+Database IDs require text even when a small numeric Excel cell would currently
+be exact. This avoids accepting IDs whose digits Excel might already have
+rounded. Restore an affected ID from a fresh export; formatting an already
+rounded numeric cell as text cannot recover it. Coordinates, height and azimuth
+can accept native numbers, but retain exported decimal text for an unchanged
+round trip.
+
+Formula cells and Excel error cells are rejected before blank handling, including
+in nullable fields. Native Excel date/time cells are rejected rather than given
+an inferred timezone. Literal strings beginning with `=` or looking like
+`#REF!` are retained when their Excel cell type is text. Text must also fit the
+XLSX cell limit and supported character set. No formulas are evaluated.
+
+`row_role` must be exactly `edit` or `reference`, and `reader_type` must be
+`csv`. These are value checks only: permission to edit a particular resource,
+the meaning of an existing ID, and whether references resolve are not decided
+here. JSON objects are parsed without defaulting or interpreting reader options.
+
+`WorkbookParseError.issues` collects invalid cells in schema, row and column
+order, with field names and original coordinates. No partial result is returned
+if any cell fails. G3.a reading errors remain `WorkbookReadError`; malformed
+caller-created documents are outside the intended API input.
+
+Successful parsing still requires G3.c identity, relationship, role and
+initial-label checks. Coordinate pairs/ranges, intervals, timezone names,
+database conflicts and eventual plan applicability remain subject to subsequent
+validation and the existing CONFIG workflow. This step does not generate YAML,
+compare against the database, or authorize an apply.
+
+```bash
+pytest -q tests/test_configuration_workbook_parsing.py
+pytest -q tests/test_configuration_workbook*.py
+```
+
+Tests cover saved template/export reading followed by parsing, reordered-cell
+provenance, null and scalar rules, precision boundaries, nested JSON, aggregated
+diagnostics and input/output independence. The complete unchanged-workbook to
+zero-write plan/apply acceptance case remains for G4-G6.
