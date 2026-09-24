@@ -956,7 +956,7 @@ as proof that an executable file-reference workflow exists.
 
 This step verifies selector uniqueness in the supplied snapshot. It does not
 query PostgreSQL again, generate a complete CONFIG document, or verify a future
-apply. G4.e/G4.f must resolve generated CONFIG against live databases and check
+apply. G4.f must resolve generated CONFIG against live databases and check
 target IDs and operations again. The source reader's separate database
 transactions and absence of an export-time baseline remain unchanged.
 
@@ -1014,8 +1014,8 @@ Current dependency rows, including helper aliases for omitted records, remain
 lookups in `references`; they do not become edits. The generated model is
 validated for CONFIG structure and semantics, but compatible-resource reuse,
 live selector targets, and final CREATE/REUSE/UPDATE operations are not yet
-verified here. G4.e/G4.f must round-trip YAML and compare resolver targets and
-operations against the intended workbook changes. A new declaration is only a
+verified here. G4.e adds validated YAML serialization; G4.f must resolve the
+serialized configuration and compare targets and operations against the intended workbook changes. A new declaration is only a
 candidate: the resolver may choose REUSE. Missing workbook rows never generate
 deletions.
 
@@ -1036,3 +1036,38 @@ unchanged/scoped/new-only workbooks, original cell diagnostics, exact BIGINTs,
 UTC dates, and input preservation. Compatibility tests exercise the real CONFIG
 reference and update selector resolvers with mocked database lookups; live
 PostgreSQL acceptance remains for G4.f.
+
+## YAML serialization (G4.e)
+
+```python
+from dendroflow.configuration.workbook.serialization import serialize_configuration
+
+serialized = serialize_configuration(generated.config)
+print(serialized.yaml_text)
+round_tripped_config = serialized.config
+```
+
+`serialize_configuration(config)` validates the public `ConfigModel`, emits
+deterministic YAML using CONFIG field order, parses that YAML back into a model,
+and validates it again. `SerializedConfiguration.yaml_text` is the YAML text;
+`SerializedConfiguration.config` is the validated model reconstructed from
+that text. The API performs no filesystem or database IO. Callers decide where
+and when to save the text.
+
+Serialization preserves explicitly supplied nullable fields, including
+`null` values that request a clear in an UPDATE. Datetimes use the model's JSON
+representation, and YAML strings such as `TRUE`, `NA`, or leading-zero IDs stay
+strings. If serialization changes the model or either validation pass fails,
+`WorkbookSerializationError` is raised and no text result is returned.
+
+This step establishes the YAML boundary, but does not run database resolution.
+G4.f verifies resolved targets and operations against the matched workbook and
+current database state before the end-to-end acceptance workflow.
+
+```bash
+pytest -q tests/test_configuration_workbook_serialization.py
+pytest -q tests/test_configuration_workbook*.py
+```
+
+Tests cover unchanged references, explicit null updates, nested declarations,
+timestamps, YAML-sensitive strings, and deterministic repeated output.
