@@ -763,3 +763,9 @@ pytest -q tests/test_configuration_workbook*.py
 Tests cover the real export/read/parse/validate path, every reference column,
 duplicate identities, site ancestry, site scope, shared dependencies, initial
 labels, new files, missing rows, reordered frames and absence of external IO.
+
+## Current database matching (G4.a)
+
+`match_workbook(parsed, current_frames)` validates the workbook and matches every nonblank workbook ID against a fresh database-shaped source snapshot. Existing IDs that are missing or outside the current selected-site ownership closure raise located `WorkbookMatchError` issues. Blank IDs remain declaration candidates with no promised INSERT action. Omitted rows remain absent from the comparison and never request deletion.
+
+`read_workbook_matches(parsed)` obtains fresh read-only configuration frames through `read_configuration_frames()` and then performs the same checks. The result retains workbook values, cell coordinates, current database rows, and the role required by current scope for G4.b field comparison. It does not persist a baseline or authorize an apply.
