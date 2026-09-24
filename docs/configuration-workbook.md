@@ -9,8 +9,10 @@ workbook values and references. G2.d saves populated XLSX workbooks with export
 metadata. G3.a reads workbook structure, validates metadata and retains raw cell
 locations/types. G3.b parses resource cells into typed DataFrames with located
 diagnostics. G3.c checks workbook identities, relationships, declared scope and
-initial-label consistency without database access. Live database comparison,
-YAML generation, and workbook CLI commands follow in G4-G5.
+initial-label consistency without database access. G4.a matches current database
+identities and scope. G4.b compares fields and reports new, unchanged, update,
+and blocked rows. Selector verification, YAML generation, and workbook CLI
+commands follow in G4.c-G5.
 The rules below are requirements for those implementations, not claims that
 header validation already enforces them.
 
@@ -769,3 +771,95 @@ labels, new files, missing rows, reordered frames and absence of external IO.
 `match_workbook(parsed, current_frames)` validates the workbook and matches every nonblank workbook ID against a fresh database-shaped source snapshot. Existing IDs that are missing or outside the current selected-site ownership closure raise located `WorkbookMatchError` issues. Blank IDs remain declaration candidates with no promised INSERT action. Omitted rows remain absent from the comparison and never request deletion.
 
 `read_workbook_matches(parsed)` obtains fresh read-only configuration frames through `read_configuration_frames()` and then performs the same checks. The result retains workbook values, cell coordinates, current database rows, and the role required by current scope for G4.b field comparison. It does not persist a baseline or authorize an apply.
+
+## Field comparison (G4.b)
+
+```python
+from collections import Counter
+
+from dendroflow.configuration.workbook.comparison import compare_workbook
+from dendroflow.configuration.workbook.matching import read_workbook_matches
+from dendroflow.configuration.workbook.parsing import parse_workbook
+from dendroflow.configuration.workbook.reader import read_workbook
+
+parsed = parse_workbook(read_workbook(
+    "~/Desktop/dendroflow-control.xlsx", expected_environment="local-dev",
+))
+matched = read_workbook_matches(parsed)
+comparison = compare_workbook(matched)
+print(dict(Counter(row.status.value for rows in comparison.rows.values() for row in rows)))
+for issue in comparison.issues:
+    print(issue.sheet, issue.coordinate, issue.message)
+comparison.raise_for_errors()
+```
+
+`compare_workbook()` accepts an unmodified `MatchedWorkbook` from G4.a. It
+performs no IO and does not modify its inputs. G4.a remains responsible for
+identity matching and current scope verification. The report uses the snapshot
+supplied to G4.a; call `read_workbook_matches()` again when a fresh read is needed.
+The environment label does not configure or authenticate database connections.
+
+Each `comparison.rows[sheet]` entry contains a detached `match`, a `status`,
+`changes`, and located `issues`. Rows remain in schema/workbook order, and fields
+are compared in schema order regardless of displayed Excel column order.
+
+| Status | Meaning |
+| --- | --- |
+| `unchanged` | Included existing fields equal current database values |
+| `new` | Blank-ID declaration candidate; subsequent CONFIG resolution may reuse a compatible record |
+| `update` | An editable existing row differs only in fields exposed by the public YAML update model |
+| `blocked` | A reference row differs, an unsupported existing field differs, or a required current value cannot be compared faithfully |
+
+`WorkbookFieldChange` retains `field`, original `coordinate`, `update_field`,
+`before`, and `after`. It includes both supported and blocked differences for
+review. `update_field` follows the versioned workbook schema. A blocked row
+never becomes a partial update, and must not be converted into a replacement
+declaration. `comparison.issues` aggregates every blocking issue; call
+`comparison.raise_for_errors()` before any later conversion. It raises
+`WorkbookComparisonError` carrying those issues. The report itself is returned
+even when blocked, so users can inspect all differences together.
+
+Comparison rules:
+
+- Existing relationships compare by target sheet and database ID. Alias edits,
+  row/column reordering, and renaming a referenced resource's descriptive or
+  natural-key fields do not themselves change the relationship.
+- Relationship differences carry `WorkbookReference` values. Existing targets
+  contain `sheet` and `database_id`, with no alias. New targets contain `sheet`
+  and `ref`, with no database ID. They remain unresolved declaration references;
+  G4.b does not guess natural-key matches or promise a CREATE operation.
+- Blank nullable values are explicit nulls. Zero and FALSE remain real values.
+  Finite numbers compare exactly, with no tolerance that could hide a real edit.
+  Timestamps compare after UTC normalization.
+- Reader options compare as JSON structures: object-key order is immaterial,
+  array order matters, and booleans remain distinct from numbers (TRUE versus 1).
+  Integer and float representations of the same JSON number compare equal.
+  File `path`, `reader_type`, and `reader_options` are mapped to their stored
+  `filepath` and `reader_config` fields before comparison.
+- Existing `is_initial` markers are recomputed from the complete current label
+  history using `(valid_from, location_label_id)`, including omitted workbook
+  labels. Changes to the helper marker or existing label fields are blocked.
+- Current values must satisfy workbook representability checks. Invalid legacy
+  text, types, timestamps, or reader settings produce located diagnostics;
+  comparison does not silently normalize them. Invalid unrelated scalar values
+  are not inspected. Required label history is inspected even when omitted.
+- Missing rows never request deletion. Reference rows must match current values,
+  including fields that are editable in a broader scope. G4.a's existing scope
+  restrictions remain unchanged.
+
+The report is not a resolved CONFIG plan. An `update` status describes field
+support, not full semantic validity or guaranteed applicability. Coordinate
+pairs/ranges, validity intervals, uniqueness, selector ambiguity, declaration
+reuse, and resulting operations still require later CONFIG validation and
+planning. G4.c-G4.f must verify selectors and generated operations before YAML
+is considered ready. Successful comparison does not authorize apply.
+
+An unchanged export should contain only `unchanged` rows and no field changes.
+The later end-to-end assertion of zero CREATE/UPDATE operations remains for
+G4.f. Database edits since export can appear as requested changes back to the
+workbook values: there is no export-time baseline or editing-history detection.
+
+```bash
+pytest -q tests/test_configuration_workbook_comparison.py
+pytest -q tests/test_configuration_workbook*.py
+```
