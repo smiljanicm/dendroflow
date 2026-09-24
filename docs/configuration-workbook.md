@@ -12,8 +12,8 @@ diagnostics. G3.c checks workbook identities, relationships, declared scope and
 initial-label consistency without database access. G4.a matches current database
 identities and scope. G4.b compares fields and reports new, unchanged, update,
 and blocked rows. G4.c builds public lookups from current identities and checks
-their uniqueness in the full source snapshot. CONFIG model generation, YAML
-output/live verification, and workbook CLI commands follow in G4.d-G5.
+their uniqueness in the full source snapshot. G4.d assembles a validated CONFIG
+model. YAML output/live verification and workbook CLI commands follow in G4.e-G5.
 The rules below are requirements for those implementations, not claims that
 header validation already enforces them.
 
@@ -964,6 +964,71 @@ transactions and absence of an export-time baseline remain unchanged.
 pytest -q tests/test_configuration_workbook_selectors.py
 pytest -q tests/test_configuration_workbook*.py
 ```
+
+## CONFIG model generation (G4.d)
+
+```python
+from dendroflow.configuration.workbook.configuration import generate_configuration
+from dendroflow.configuration.workbook.matching import read_workbook_matches
+from dendroflow.configuration.workbook.parsing import parse_workbook
+from dendroflow.configuration.workbook.reader import read_workbook
+
+parsed = parse_workbook(read_workbook(
+    "~/Desktop/dendroflow-control.xlsx", expected_environment="local-dev",
+))
+generated = generate_configuration(read_workbook_matches(parsed))
+print(generated.config.model_dump(exclude_defaults=True))
+```
+
+`generate_configuration(matched)` runs G4.b and G4.c against the supplied
+G4.a snapshot, then assembles and validates a public `ConfigModel` with the
+existing CONFIG validator. It performs no file/database IO and emits no YAML.
+The returned `GeneratedConfiguration` contains the model, comparison report,
+and verified selectors used to create it. A G4.b blocker or a model/CONFIG
+validation error raises `WorkbookConfigurationError` or the existing
+`WorkbookComparisonError`; no partial model is returned. Configuration errors
+carry `WorkbookIssue` records when an originating workbook cell is known.
+
+Existing records become `references` entries using G4.c's current-value
+selectors. New rows become normal CONFIG declarations with their workbook refs.
+Supported changes on editable rows become `updates` with the current selector
+in `update` and workbook values in `set`. Nullable clears remain explicit nulls.
+The original site code, serial number, model identity, deployment start, and
+other current selector values therefore keep updates bound to the original row.
+Unsupported edits and changes on reference rows stop generation.
+
+New location declarations contain their one initial label as nested
+`initial_label`. Additional new noninitial labels remain in top-level
+`location_labels`; the nested initial row is omitted there. Existing labels and
+interfaces are comparison context and are not redeclared.
+
+Files require special composition because CONFIG has no executable
+`references.files` workflow. If a new interface uses an existing file, G4.d
+emits a file declaration with that file's current path, timestamp settings,
+reader settings, and a stable alias. The normal CONFIG resolver can then reuse
+the existing file and create the interface. New files and their new interfaces
+are emitted together. Multiple new interfaces for one file share one file
+declaration. G4.d does not change existing files or interfaces.
+
+Current dependency rows, including helper aliases for omitted records, remain
+lookups in `references`; they do not become edits. The generated model is
+validated for CONFIG structure and semantics, but compatible-resource reuse,
+live selector targets, and final CREATE/REUSE/UPDATE operations are not yet
+verified here. G4.e/G4.f must round-trip YAML and compare resolver targets and
+operations against the intended workbook changes. A new declaration is only a
+candidate: the resolver may choose REUSE. Missing workbook rows never generate
+deletions.
+
+```bash
+pytest -q tests/test_configuration_workbook_configuration.py
+pytest -q tests/test_configuration_workbook*.py
+```
+
+Tests cover unchanged reference-only workbooks, supported updates, explicit
+nulls, mixed additions and updates, nested initial labels, shared file reuse
+declarations, new files/interfaces, site-scoped dependencies, templates,
+validation diagnostics, deterministic output, and input preservation. Live
+resolver operation checks remain for G4.e/G4.f.
 
 Tests cover public lookup shapes, current-value renames, full-snapshot
 ambiguity, omitted dependencies, alias collisions, initial-label history,
