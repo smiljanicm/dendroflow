@@ -1071,3 +1071,43 @@ pytest -q tests/test_configuration_workbook*.py
 
 Tests cover unchanged references, explicit null updates, nested declarations,
 timestamps, YAML-sensitive strings, and deterministic repeated output.
+
+## Resolver verification (G4.f)
+
+```python
+from dendroflow.configuration.workbook.verification import verify_generated_configuration
+
+verified = verify_generated_configuration(generated)
+print(verified.serialized.yaml_text)
+for item in verified.plan.items:
+    print(item.source_path, item.action.value, item.database_id)
+```
+
+`verify_generated_configuration(generated)` serializes and round-trips the
+generated CONFIG, then calls the existing read-only CONFIG resolver using the
+configured database connections. It returns the YAML and resolved plan only
+after checking that current reference aliases bind to the database IDs verified
+by G4.c, each supported workbook change resolves to an UPDATE of its original
+ID with the same changed fields and values, and every declaration has exactly
+one CREATE or REUSE operation. Declaration aliases must bind to those same
+operations. A file declaration emitted for a new interface must REUSE the
+workbook's intended existing file ID. A new workbook row may resolve to either
+CREATE or compatible REUSE. An unchanged workbook must resolve to an empty
+operation plan.
+
+Resolver errors, missing or unexpected operations, wrong targets, and
+unexpected changes raise `WorkbookPlanVerificationError`; its `plan` attribute
+retains the blocked plan for diagnosis. The verifier performs no preparation,
+confirmation, or database writes. The configured METADATA and RAW connections
+must point to the target pair represented by `target_environment`; G5 will bind
+that label to connection configuration.
+
+```bash
+pytest -q tests/test_configuration_workbook_verification.py
+pytest -q tests/test_configuration_workbook*.py
+```
+
+Unit tests use controlled resolved plans to verify unchanged workbooks, scalar
+and relationship updates, new declarations, existing-file reuse, wrong targets,
+and resolver errors. Live database acceptance and export-to-apply checks remain
+part of the later end-to-end verification.
