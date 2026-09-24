@@ -11,8 +11,9 @@ locations/types. G3.b parses resource cells into typed DataFrames with located
 diagnostics. G3.c checks workbook identities, relationships, declared scope and
 initial-label consistency without database access. G4.a matches current database
 identities and scope. G4.b compares fields and reports new, unchanged, update,
-and blocked rows. Selector verification, YAML generation, and workbook CLI
-commands follow in G4.c-G5.
+and blocked rows. G4.c builds public lookups from current identities and checks
+their uniqueness in the full source snapshot. CONFIG model generation, YAML
+output/live verification, and workbook CLI commands follow in G4.d-G5.
 The rules below are requirements for those implementations, not claims that
 header validation already enforces them.
 
@@ -863,3 +864,110 @@ workbook values: there is no export-time baseline or editing-history detection.
 pytest -q tests/test_configuration_workbook_comparison.py
 pytest -q tests/test_configuration_workbook*.py
 ```
+
+## Existing-resource selectors (G4.c)
+
+```python
+from dendroflow.configuration.workbook.matching import read_workbook_matches
+from dendroflow.configuration.workbook.parsing import parse_workbook
+from dendroflow.configuration.workbook.reader import read_workbook
+from dendroflow.configuration.workbook.selectors import build_workbook_selectors
+
+parsed = parse_workbook(read_workbook(
+    "~/Desktop/dendroflow-control.xlsx", expected_environment="local-dev",
+))
+matched = read_workbook_matches(parsed)
+verified = build_workbook_selectors(matched)
+for sheet, selectors in verified.selectors.items():
+    for database_id, selector in selectors.items():
+        print(sheet, database_id, selector.alias,
+              selector.lookup.model_dump(exclude_none=True))
+```
+
+`build_workbook_selectors()` accepts an unmodified G4.a `MatchedWorkbook`, runs
+G4.b on that same snapshot, and rejects blocked comparisons before building
+selectors. It performs no file or database IO. The returned `WorkbookSelectors`
+contains a `selectors[sheet][database_id]` mapping for the nine resources with
+public lookup models. Each `WorkbookSelector` includes its current identity,
+alias, public Pydantic `lookup` model, dependency keys `(sheet, database_id)`,
+and a `helper` flag for omitted current dependencies. Result mappings/models
+are caller-owned. Database IDs are internal verification evidence, not public
+YAML lookup fields.
+
+The builder uses the complete current identifying fields exposed by CONFIG:
+
+| Resource | Public lookup fields from current database state |
+| --- | --- |
+| sites | `site_code` |
+| location_types, sensor_types | `type` |
+| variables | `variable` |
+| sensor_models | `manufacturer`, `model` |
+| sensors | `serial_number`, reference to current `sensor_model` |
+| locations | Reference to current `site`, earliest `initial_label` text |
+| deployments | References to current `sensor`, `location`, `variable`, plus `valid_from` |
+| files | `path` from stored `filepath` |
+
+Existing location-label and interface rows have no public lookup models and
+remain comparison context. Blank-ID rows remain new declaration candidates and
+receive no existing selector. An all-new template yields empty selector maps.
+
+Selectors always describe the current record. A site-code rename selects the
+old site code; a sensor-model reassignment selects the current model; a
+deployment date change selects the current start instant. Proposed values are
+retained in G4.b and belong in later explicit updates, not in the lookup.
+
+Selector dependencies can require records omitted from the edited workbook.
+The builder follows current database IDs recursively and creates helper aliases
+for those records. It reuses an included existing row's workbook alias when
+available. Generated aliases use `current_<resource>_<id>`, with deterministic
+numeric suffixes to avoid collisions with any existing or new workbook alias
+in the same resource namespace. A dependency is always an existing reference;
+it must not accidentally bind to a new declaration that replaced the old row.
+Helpers are lookup context only: they do not broaden edit scope or request
+changes to omitted resources. Row/column reordering does not change selectors.
+
+Verification compares all supplied selector predicates against the full G4.a
+snapshot, including records absent from the workbook or outside its selected
+site scope. The candidate IDs must be exactly the intended ID. Full composite
+selectors distinguish repeated serial numbers across models and repeated
+initial labels across sites. Duplicates that remain ambiguous are errors; the
+builder does not pick the first row or add unsupported lookup fields (such as
+deployment `valid_to`) to distinguish them.
+
+Initial labels come from complete current history ordered by `valid_from` then
+`location_label_id`, even if every label row was omitted from the workbook.
+An intended location without a label cannot be expressed with this lookup.
+Unlabeled candidate locations are excluded consistently with CONFIG's lateral
+inner join. Deployment timestamps are normalized to UTC instants. Identity
+text is checked before constructing lookup models, so automatic whitespace
+normalization cannot silently change what is selected.
+
+Failures raise `WorkbookSelectorError` with located `issues`; no partial result
+is returned. Errors point to the existing workbook row's ID cell. A failed
+omitted dependency is reported at its dependent workbook row, naming the
+current dependency ID. G4.b blocking errors remain `WorkbookComparisonError`.
+
+File selectors require special handling in the next step. G4.c returns a
+`FileLookupConfig` as identity evidence, but the existing CONFIG resolver does
+not execute `references.files`. G4.d must put new interfaces for an existing
+file into a compatible file declaration using current file settings. It must
+verify reuse of the intended file, rather than treating a returned lookup model
+as proof that an executable file-reference workflow exists.
+
+This step verifies selector uniqueness in the supplied snapshot. It does not
+query PostgreSQL again, generate a complete CONFIG document, or verify a future
+apply. G4.e/G4.f must resolve generated CONFIG against live databases and check
+target IDs and operations again. The source reader's separate database
+transactions and absence of an export-time baseline remain unchanged.
+
+```bash
+pytest -q tests/test_configuration_workbook_selectors.py
+pytest -q tests/test_configuration_workbook*.py
+```
+
+Tests cover public lookup shapes, current-value renames, full-snapshot
+ambiguity, omitted dependencies, alias collisions, initial-label history,
+unchanged/scoped/new-only workbooks, original cell diagnostics, exact BIGINTs,
+UTC dates, and input preservation. Compatibility tests exercise the real CONFIG
+reference and update selector resolvers with mocked database lookups; live
+PostgreSQL acceptance remains for G4.f.
