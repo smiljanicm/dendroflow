@@ -8,9 +8,9 @@ configuration into pandas DataFrames. G2.c selects the export scope and prepares
 workbook values and references. G2.d saves populated XLSX workbooks with export
 metadata. G3.a reads workbook structure, validates metadata and retains raw cell
 locations/types. G3.b parses resource cells into typed DataFrames with located
-diagnostics. Relationship validation remains for G3.c; database comparison,
-YAML generation, and workbook CLI commands follow
-in G4-G5.
+diagnostics. G3.c checks workbook identities, relationships, declared scope and
+initial-label consistency without database access. Live database comparison,
+YAML generation, and workbook CLI commands follow in G4-G5.
 The rules below are requirements for those implementations, not claims that
 header validation already enforces them.
 
@@ -211,8 +211,9 @@ appear as changes back to workbook values. Explicit review remains required.
 G2 is implemented through Python APIs: template generation, database reading,
 scope/value preparation, and populated writing with export metadata. Desktop
 editing and the complete import/compare round trip still need acceptance checks.
-G3.a reads structure and metadata; G3.b parses resource cells. G3.c will validate
-identities, relationships and workbook roles.
+G3.a reads structure and metadata; G3.b parses resource cells; G3.c validates
+identities, relationships and roles within the workbook. Verification against
+current database state belongs to G4.
 G4 compares against databases and writes YAML; G5 adds CLI commands; G6 verifies
 the complete round trip. Unsupported legacy database values need clear export
 or conversion diagnostics, not silent normalization that changes their meaning.
@@ -645,8 +646,8 @@ order, with field names and original coordinates. No partial result is returned
 if any cell fails. G3.a reading errors remain `WorkbookReadError`; malformed
 caller-created documents are outside the intended API input.
 
-Successful parsing still requires G3.c identity, relationship, role and
-initial-label checks. Coordinate pairs/ranges, intervals, timezone names,
+Successful parsing still requires the G3.c identity, relationship, role and
+initial-label checks below. Coordinate pairs/ranges, intervals, timezone names,
 database conflicts and eventual plan applicability remain subject to subsequent
 validation and the existing CONFIG workflow. This step does not generate YAML,
 compare against the database, or authorize an apply.
@@ -660,3 +661,105 @@ Tests cover saved template/export reading followed by parsing, reordered-cell
 provenance, null and scalar rules, precision boundaries, nested JSON, aggregated
 diagnostics and input/output independence. The complete unchanged-workbook to
 zero-write plan/apply acceptance case remains for G4-G6.
+
+## Workbook consistency validation (G3.c)
+
+```python
+from dendroflow.configuration.workbook.parsing import parse_workbook
+from dendroflow.configuration.workbook.reader import read_workbook
+from dendroflow.configuration.workbook.validation import (
+    WorkbookValidationError,
+    validate_workbook,
+)
+
+parsed = parse_workbook(read_workbook(
+    "~/Desktop/dendroflow-control.xlsx",
+    expected_environment="local-dev",
+))
+try:
+    validate_workbook(parsed)
+except WorkbookValidationError as error:
+    for issue in error.issues:
+        print(issue.sheet, issue.coordinate, issue.message)
+else:
+    print("Workbook consistency checks passed. Database state was not checked.")
+```
+
+`validate_workbook()` accepts an unmodified `ParsedWorkbook`, returns None on
+success, and raises `WorkbookValidationError` with located `issues` on failure.
+It performs no file or database IO and does not modify values or coordinates.
+Rows and columns may be reordered as long as their coordinate frames stay
+aligned. The public workflow remains read, parse, validate; this function does
+not repeat G3.a/G3.b scalar validation or validate arbitrarily constructed frames.
+
+The identity and relationship checks:
+
+- Require every nonblank database ID to be unique within its sheet. Multiple
+  blank IDs remain valid candidates for new resources.
+- Require each trimmed, case-sensitive `ref` to be unique within its sheet.
+  The same alias can occur in different sheets.
+- Resolve every nonblank relationship through the schema's target sheet.
+  Missing and ambiguous references are errors; duplicate aliases are never
+  resolved by choosing the first row.
+- Reject self-links and longer cycles in site ancestry.
+
+These checks do not verify that an ID exists in the database. G4 must reject
+stale or invented IDs instead of replacing them with CREATE operations.
+
+Workbook role and scope checks follow this table:
+
+| Scope/row | Required role and restriction |
+| --- | --- |
+| template | Blank database IDs and `edit` roles for every resource row |
+| all | Every included row has role `edit`; existing and new rows are allowed |
+| sites: selected existing sites | Selected IDs must be represented in `sites`, with role `edit` |
+| sites: ancestor sites | Existing required ancestors have role `reference`; new sites require all/template scope |
+| sites: locations, labels, deployments, interfaces | Role `edit`; the workbook ownership chain must end at a selected site |
+| sites: shared catalogue/instrument/file rows | Existing rows have role `reference`; new supporting rows have role `edit` |
+
+For a site export, each shared or ancestor row must be reachable as a dependency
+of a selected site or one of its locations, labels, deployments or interfaces.
+Unrelated existing rows and unattached new catalogue/file rows require a broader
+scope. Following an interface to its file never includes other interfaces from
+that shared file. Selected site rows remain necessary scope anchors even when
+the user omits other records.
+
+This is a check of the workbook's declared relationships only. A user can edit a
+relationship to make an unrelated existing record appear to belong to a selected
+site. **G4 must independently check current database ownership and row roles**,
+as well as differences on reference rows, before emitting YAML. G3.c success
+does not grant permission to update a resource or prove that an edit is supported.
+
+Initial-label and file checks:
+
+- Each new location requires exactly one associated new label with
+  `is_initial=TRUE`. Additional new labels must use FALSE. Existing label IDs
+  cannot be attached to a new location.
+- A new label attached to an existing location must have `is_initial=FALSE`.
+- More than one initial marker among the included labels of any location is
+  an error. Existing locations do not require their initial-label row to remain
+  in the workbook: omission is not deletion. G4 must compare each included
+  existing label and its helper marker against current database state.
+- Each new file requires at least one associated new interface. An existing
+  interface cannot supply that requirement because RAW UPDATE is unsupported.
+  Existing unreferenced files remain valid in all scope.
+
+The validator collects issues by check stage, using schema and workbook row
+order within each stage. Every duplicate participant is reported. Missing
+selected sites are reported against `workbook_info` without inventing a cell
+coordinate. Other issues retain the original cell coordinates through G3.b.
+
+Unchanged exported workbooks should pass these offline checks. This does not
+prove that existing immutable values are unchanged, check every CONFIG semantic
+constraint (such as ranges or validity overlaps), generate YAML or authorize
+apply. G4 and the existing CONFIG validation/planning pipeline remain required.
+Missing rows never generate deletion requests.
+
+```bash
+pytest -q tests/test_configuration_workbook_validation.py
+pytest -q tests/test_configuration_workbook*.py
+```
+
+Tests cover the real export/read/parse/validate path, every reference column,
+duplicate identities, site ancestry, site scope, shared dependencies, initial
+labels, new files, missing rows, reordered frames and absence of external IO.
