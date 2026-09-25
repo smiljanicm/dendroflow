@@ -960,6 +960,95 @@ check are complete.
 
 ---
 
+## Stable snapshot capture (GF2)
+
+`ingest_file()` first captures the registered source to a content-addressed
+snapshot, then fingerprints and reads that staged copy. The source must keep
+the same device, inode, size, modification time, and change time for the settle
+interval and throughout capture. If it changes during capture, DendroFlow
+retries up to three captures. If it cannot settle within 60 seconds, or all
+three captures detect changes, it raises `SourceFileChangingError` and does not
+create an ingestion run for an unstable capture.
+
+The settle interval defaults to one second and can be changed with
+`DENDROFLOW_FILE_SETTLE_SECONDS`. The persistent staging directory can be set
+with `DENDROFLOW_SNAPSHOT_DIR`; it defaults to
+`~/.local/state/dendroflow/snapshots`. The directory must be absolute and
+writable. Add both settings to the service environment when running DendroFlow
+unattended. The Docker Compose application uses `/var/lib/dendroflow/snapshots`
+on a named volume so snapshots survive container recreation. `.env.example`
+shows the corresponding settings.
+
+Snapshots are stored below a directory named for `file_id` and named by the
+SHA-256 hash of the complete newline-terminated content. A trailing physical
+line without a newline is omitted from the staged copy and reported as deferred
+bytes by the capture result; a later capture can include it once completed.
+This uses the current one-physical-line-per-record CSV contract. Empty complete
+content is captured as an empty snapshot.
+
+Snapshots are retained on disk so a later resume can use the exact bytes
+associated with its file version. Automatic garbage collection is not part of
+GF2; operators must provision and monitor the staging volume. A future cleanup
+task must preserve snapshots referenced by any running or resumable run.
+
+Unit tests cover content hashing, content-addressed reuse, incomplete trailing
+lines, empty snapshots, and source changes during capture. The existing
+PostgreSQL interruption/resume test uses a temporary staging directory. These
+tests do not yet establish append overlap handling, historical conflict
+detection, or resuming an older snapshot after the live source has grown; those
+remain later growing-file work.
+
+Run the unit coverage with:
+
+```bash
+pytest -q tests/test_ingestion_snapshots.py tests/test_ingestion_service.py
+```
+
+Run the opt-in PostgreSQL resume check with:
+
+```bash
+DENDROFLOW_INTEGRATION=1 pytest -q tests/integration/test_raw_ingestion.py
+```
+
+---
+
+The ingestion layer has two levels of automated tests.
+
+## Unit tests
+
+The normal test suite runs without requiring a live database:
+
+```bash
+pytest
+```
+
+These tests cover readers, normalization, file versioning, runs, targets, batch lifecycle, writer behavior, and ingestion orchestration.
+
+## PostgreSQL integration test
+
+The integration test is opt-in because it requires migrated DendroFlow PostgreSQL databases:
+
+```bash
+DENDROFLOW_INTEGRATION=1 \
+pytest tests/integration/test_raw_ingestion.py -m integration -v
+```
+
+The integration test verifies the complete interruption-and-resume path against the real PostgreSQL schema, including:
+
+```text
+run + targets
+completed batch
+interrupted running batch
+resume
+batch retry
+remaining batches
+RAW observation count
+successful interface markers
+run finalization
+```
+
+The test fixture removes its temporary database records after execution.
+
 # Testing
 
 The ingestion layer has two levels of automated tests.

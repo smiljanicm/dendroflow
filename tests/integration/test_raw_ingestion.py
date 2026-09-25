@@ -495,8 +495,13 @@ def raw_ingestion_fixture(tmp_path):
 
 def test_raw_ingestion_resumes_interrupted_run(
     raw_ingestion_fixture,
+    monkeypatch,
 ):
     file_id = raw_ingestion_fixture["file_id"]
+    monkeypatch.setenv(
+        "DENDROFLOW_SNAPSHOT_DIR",
+        str(raw_ingestion_fixture["path"].parent / "snapshots"),
+    )
 
     source_file = get_source_file(file_id)
 

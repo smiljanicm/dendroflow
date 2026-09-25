@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -16,6 +17,16 @@ from dendroflow.ingestion import (
     insert_raw_observations,
 )
 from dendroflow.tabular import TabularBatch
+
+
+def fake_snapshot(path, file_id):
+    return SimpleNamespace(
+        snapshot_path=path,
+        fingerprint=FileFingerprint(
+            file_hash="sha256:test",
+            file_size=100,
+        ),
+    )
 
 
 def test_insert_raw_observations():
@@ -96,11 +107,6 @@ def test_ingest_file(monkeypatch, tmp_path):
         timestamp_timezone="UTC",
         timestamp_format="%Y-%m-%d %H:%M:%S",
         reader_config={},
-    )
-
-    fingerprint = FileFingerprint(
-        file_hash="sha256:test",
-        file_size=100,
     )
 
     file_version = FileVersion(
@@ -199,8 +205,8 @@ def test_ingest_file(monkeypatch, tmp_path):
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.service.fingerprint_file",
-        lambda path: fingerprint,
+        "dendroflow.ingestion.service.capture_source_snapshot",
+        fake_snapshot,
     )
 
     monkeypatch.setattr(
@@ -235,7 +241,7 @@ def test_ingest_file(monkeypatch, tmp_path):
 
     monkeypatch.setattr(
         "dendroflow.ingestion.service.read_source_file",
-        lambda file_id: iter((tabular_batch,)),
+        lambda file_id, **kwargs: iter((tabular_batch,)),
     )
 
     monkeypatch.setattr(
@@ -389,11 +395,8 @@ def test_ingest_file_retries_failed_batch(
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.service.fingerprint_file",
-        lambda path: FileFingerprint(
-            file_hash="sha256:test",
-            file_size=100,
-        ),
+        "dendroflow.ingestion.service.capture_source_snapshot",
+        fake_snapshot,
     )
 
     monkeypatch.setattr(
@@ -438,7 +441,7 @@ def test_ingest_file_retries_failed_batch(
 
     monkeypatch.setattr(
         "dendroflow.ingestion.service.read_source_file",
-        lambda file_id: iter((tabular_batch,)),
+        lambda file_id, **kwargs: iter((tabular_batch,)),
     )
 
     monkeypatch.setattr(
@@ -508,11 +511,6 @@ def test_ingest_file_reuses_completed_ingestion(
         reader_config={},
     )
 
-    fingerprint = FileFingerprint(
-        file_hash="sha256:test",
-        file_size=100,
-    )
-
     file_version = FileVersion(
         file_version_id=3,
         file_id=1,
@@ -542,8 +540,8 @@ def test_ingest_file_reuses_completed_ingestion(
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.service.fingerprint_file",
-        lambda path: fingerprint,
+        "dendroflow.ingestion.service.capture_source_snapshot",
+        fake_snapshot,
     )
 
     monkeypatch.setattr(
@@ -612,11 +610,8 @@ def test_ingest_file_rejects_partial_reingestion(
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.service.fingerprint_file",
-        lambda path: FileFingerprint(
-            file_hash="sha256:test",
-            file_size=100,
-        ),
+        "dendroflow.ingestion.service.capture_source_snapshot",
+        fake_snapshot,
     )
 
     monkeypatch.setattr(
@@ -711,11 +706,8 @@ def test_ingest_file_skips_completed_batch(
     )
 
     monkeypatch.setattr(
-        "dendroflow.ingestion.service.fingerprint_file",
-        lambda path: FileFingerprint(
-            file_hash="sha256:test",
-            file_size=100,
-        ),
+        "dendroflow.ingestion.service.capture_source_snapshot",
+        fake_snapshot,
     )
 
     monkeypatch.setattr(
@@ -755,7 +747,7 @@ def test_ingest_file_skips_completed_batch(
 
     monkeypatch.setattr(
         "dendroflow.ingestion.service.read_source_file",
-        lambda file_id: iter((tabular_batch,)),
+        lambda file_id, **kwargs: iter((tabular_batch,)),
     )
 
     monkeypatch.setattr(

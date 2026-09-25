@@ -42,7 +42,11 @@ def get_source_file(file_id: int) -> SourceFile:
     )
 
 
-def read_source_file(file_id: int) -> Iterator[TabularBatch]:
+def read_source_file(
+    file_id: int,
+    *,
+    source_path: Path | None = None,
+) -> Iterator[TabularBatch]:
     """Read a registered source file using its database configuration."""
 
     source_file = get_source_file(file_id)
@@ -52,7 +56,7 @@ def read_source_file(file_id: int) -> Iterator[TabularBatch]:
     )
 
     yield from reader.read(
-        source_file.filepath
+        source_file.filepath if source_path is None else source_path
     )
 
 

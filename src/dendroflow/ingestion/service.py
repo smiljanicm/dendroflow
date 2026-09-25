@@ -15,6 +15,7 @@ from .runs import (
     get_ingested_interface_ids,
     get_resumable_ingestion_run,
 )
+from .snapshots import capture_source_snapshot
 from .sources import (
     get_deployments,
     get_source_file,
@@ -22,7 +23,6 @@ from .sources import (
     read_source_file,
 )
 from .versions import (
-    fingerprint_file,
     get_or_create_file_version,
 )
 from .writer import write_ingestion_batch
@@ -40,11 +40,14 @@ def ingest_file(
 
     source_file = get_source_file(file_id)
 
-    fingerprint = fingerprint_file(source_file.filepath)
+    snapshot = capture_source_snapshot(
+        source_file.filepath,
+        file_id,
+    )
 
     file_version = get_or_create_file_version(
         file_id,
-        fingerprint,
+        snapshot.fingerprint,
     )
 
     interfaces = get_source_interfaces(file_id)
@@ -106,7 +109,10 @@ def ingest_file(
     try:
         batch_number = 0
 
-        for tabular_batch in read_source_file(file_id):
+        for tabular_batch in read_source_file(
+            file_id,
+            source_path=snapshot.snapshot_path,
+        ):
             if len(tabular_batch.dataframe) == 0:
                 continue
 
@@ -205,4 +211,3 @@ def ingest_file(
             pass
 
         raise
-
