@@ -6,7 +6,7 @@ from dendroflow.database import DATABASES
 from dendroflow.migrations import migrate_database
 
 from .configuration import apply, plan, validate
-from .workbook import export_workbook, validate_workbook_file
+from .workbook import convert_workbook, export_workbook, validate_workbook_file
 
 
 def migrate(_args: argparse.Namespace) -> int:
@@ -152,6 +152,23 @@ def main(argv: list[str] | None = None) -> int:
         help="Path to the .xlsx workbook.",
     )
     workbook_validate_parser.set_defaults(handler=validate_workbook_file)
+
+    workbook_convert_parser = workbook_commands.add_parser(
+        "convert",
+        help="Compare a workbook with current databases and write CONFIG YAML.",
+        description="Compare and convert a validated workbook to CONFIG YAML.",
+    )
+    workbook_convert_parser.add_argument(
+        "workbook",
+        type=Path,
+        help="Path to the .xlsx workbook.",
+    )
+    workbook_convert_parser.add_argument(
+        "output",
+        type=Path,
+        help="Path for a new .yaml or .yml configuration file.",
+    )
+    workbook_convert_parser.set_defaults(handler=convert_workbook)
 
     args = parser.parse_args(argv)
     return args.handler(args)

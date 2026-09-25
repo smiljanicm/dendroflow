@@ -236,3 +236,112 @@ def test_workbook_validate_needs_no_database_credentials(monkeypatch, tmp_path):
     monkeypatch.setattr(workbook, "validate_workbook", lambda _parsed: None)
 
     assert main(["config", "workbook", "validate", str(tmp_path / "ok.xlsx")]) == 0
+
+
+def install_conversion_mocks(monkeypatch):
+    target = config.DatabaseTarget(
+        "local-dev",
+        {"host": "localhost", "port": "5432", "user": "tester", "password": "secret"},
+    )
+    document = object()
+    parsed = object()
+    matched = object()
+    comparison = SimpleNamespace(
+        metadata=SimpleNamespace(scope="all"),
+        rows={
+            "sites": (
+                SimpleNamespace(status=SimpleNamespace(value="unchanged")),
+                SimpleNamespace(status=SimpleNamespace(value="update")),
+            ),
+            "variables": (SimpleNamespace(status=SimpleNamespace(value="new")),),
+        },
+    )
+    generated = SimpleNamespace(config=object(), comparison=comparison)
+    serialized = SimpleNamespace(yaml_text="sites: []\n")
+    calls = {}
+    monkeypatch.setattr(workbook, "get_database_target", lambda: target)
+
+    def read(path, *, expected_environment):
+        calls["read"] = (path, expected_environment)
+        return document
+
+    def parse(value):
+        calls["parse"] = value
+        return parsed
+
+    def match(value):
+        calls["match"] = value
+        return matched
+
+    def generate(value):
+        calls["generate"] = value
+        return generated
+
+    def serialize(value):
+        calls["serialize"] = value
+        return serialized
+
+    monkeypatch.setattr(workbook, "read_workbook", read)
+    monkeypatch.setattr(workbook, "parse_workbook", parse)
+    monkeypatch.setattr(workbook, "read_workbook_matches", match)
+    monkeypatch.setattr(workbook, "generate_configuration", generate)
+    monkeypatch.setattr(workbook, "serialize_configuration", serialize)
+    return calls, target, document, parsed, matched, generated, serialized
+
+
+def test_workbook_convert_compares_and_writes_yaml(
+    monkeypatch, tmp_path, capsys,
+):
+    calls, target, document, parsed, matched, generated, serialized = install_conversion_mocks(monkeypatch)
+    workbook_path = tmp_path / "edited.xlsx"
+    output = tmp_path / "desired.yaml"
+
+    assert main([
+        "config", "workbook", "convert", str(workbook_path), str(output),
+    ]) == 0
+
+    assert output.read_text(encoding="utf-8") == serialized.yaml_text
+    assert calls == {
+        "read": (workbook_path, target.environment),
+        "parse": document,
+        "match": parsed,
+        "generate": matched,
+        "serialize": generated.config,
+    }
+    report = capsys.readouterr().out
+    assert "Scope: all" in report
+    assert "unchanged=1, new=1, update=1, blocked=0" in report
+    assert "config plan" in report
+
+
+def test_workbook_convert_rejects_existing_output_before_database_access(
+    monkeypatch, tmp_path, capsys,
+):
+    output = tmp_path / "desired.yaml"
+    output.write_text("keep", encoding="utf-8")
+    monkeypatch.setattr(
+        workbook,
+        "get_database_target",
+        lambda: pytest.fail("target should not be resolved"),
+    )
+
+    assert main([
+        "config", "workbook", "convert", "edited.xlsx", str(output),
+    ]) == 2
+
+    assert output.read_text(encoding="utf-8") == "keep"
+    assert "already exists" in capsys.readouterr().err
+
+
+def test_workbook_convert_rejects_non_yaml_extension_before_database_access(
+    monkeypatch, tmp_path,
+):
+    monkeypatch.setattr(
+        workbook,
+        "get_database_target",
+        lambda: pytest.fail("target should not be resolved"),
+    )
+
+    assert main([
+        "config", "workbook", "convert", "edited.xlsx", str(tmp_path / "desired.json"),
+    ]) == 2

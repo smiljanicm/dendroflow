@@ -92,6 +92,31 @@ confirm that IDs, ownership, immutable fields, or row roles still match the
 database. A successful result does not authorize changes; continue with the
 database comparison and reviewed CONFIG plan.
 
+## Workbook to CONFIG YAML CLI (G5.d)
+
+Convert an edited workbook to a new CONFIG YAML file:
+
+```bash
+dendroflow config workbook convert ./control.xlsx ./desired-config.yaml
+```
+
+Conversion checks the workbook against the current configured database target,
+compares existing rows with current records, and stops on missing IDs,
+out-of-scope identities, unsupported edits, or other blocking diagnostics. It
+then assembles and validates the CONFIG model and confirms that the YAML
+round-trips to the same model. The output must end in `.yaml` or `.yml`; its
+directory must exist and an existing file is never overwritten. The command
+reports the target, workbook scope, and counts of unchanged, new, updated, and
+blocked rows. New declarations and updates are proposals; the output is not an
+executable plan and makes no database changes.
+
+Review the generated YAML and its planned operations before applying:
+
+```bash
+dendroflow config plan ./desired-config.yaml
+dendroflow config apply ./desired-config.yaml
+```
+
 ## Sheets and headers
 
 Exports contain `guide`, `workbook_info`, and all eleven resource sheets below.

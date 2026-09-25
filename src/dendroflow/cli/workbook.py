@@ -3,6 +3,7 @@
 import argparse
 import os
 import sys
+from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
 
@@ -12,6 +13,15 @@ from dendroflow.config import (
     DatabaseTarget,
     get_database_target,
     get_target_environment,
+)
+from dendroflow.configuration.workbook.comparison import WorkbookComparisonError
+from dendroflow.configuration.workbook.configuration import (
+    WorkbookConfigurationError,
+    generate_configuration,
+)
+from dendroflow.configuration.workbook.matching import (
+    WorkbookMatchError,
+    read_workbook_matches,
 )
 from dendroflow.configuration.workbook.parsing import (
     WorkbookParseError,
@@ -26,6 +36,10 @@ from dendroflow.configuration.workbook.reader import (
     read_workbook,
 )
 from dendroflow.configuration.workbook.schema import RESOURCE_SHEETS
+from dendroflow.configuration.workbook.serialization import (
+    WorkbookSerializationError,
+    serialize_configuration,
+)
 from dendroflow.configuration.workbook.source import read_configuration_frames
 from dendroflow.configuration.workbook.validation import (
     WorkbookValidationError,
@@ -151,3 +165,67 @@ def validate_workbook_file(args: argparse.Namespace) -> int:
     ))
     print("Checks: workbook structure, cell values, identities, relationships, and scope")
     return 0
+
+
+def _yaml_output_path_error(path: Path) -> str | None:
+    if path.suffix.lower() not in {".yaml", ".yml"}:
+        return "configuration output path must end with .yaml or .yml"
+    if not path.parent.exists() or not path.parent.is_dir():
+        return f"output directory does not exist: {path.parent}"
+    if os.path.lexists(path):
+        return f"output file already exists: {path}"
+    return None
+
+
+def _convert(args: argparse.Namespace, target: DatabaseTarget) -> int:
+    try:
+        document = read_workbook(args.workbook, expected_environment=target.environment)
+        parsed = parse_workbook(document)
+        matched = read_workbook_matches(parsed)
+        generated = generate_configuration(matched)
+        serialized = serialize_configuration(generated.config)
+        with args.output.open("x", encoding="utf-8", newline="\n") as stream:
+            stream.write(serialized.yaml_text)
+    except (
+        WorkbookReadError,
+        WorkbookParseError,
+        WorkbookValidationError,
+        WorkbookMatchError,
+        WorkbookComparisonError,
+        WorkbookConfigurationError,
+        WorkbookSerializationError,
+    ) as error:
+        return _report_workbook_issues("Workbook conversion failed", error)
+    except FileExistsError as error:
+        print(f"Workbook conversion failed: {error}", file=sys.stderr)
+        return 2
+    except (OSError, TypeError, ValueError) as error:
+        print(f"Workbook conversion failed: {error}", file=sys.stderr)
+        return 2
+    except (psycopg.Error, RuntimeError) as error:
+        print(f"Workbook conversion failed: {error}", file=sys.stderr)
+        return 1
+
+    totals = Counter(
+        row.status.value
+        for rows in generated.comparison.rows.values()
+        for row in rows
+    )
+    print(f"Configuration YAML written: {args.output}")
+    print(f"Target environment: {target.environment}")
+    print(f"Scope: {generated.comparison.metadata.scope}")
+    print("Rows: " + ", ".join(
+        f"{status}={totals.get(status, 0)}"
+        for status in ("unchanged", "new", "update", "blocked")
+    ))
+    print("Review the YAML, then use `dendroflow config plan` before applying it.")
+    return 0
+
+
+def convert_workbook(args: argparse.Namespace) -> int:
+    """Convert a workbook to YAML after comparing with current databases."""
+    problem = _yaml_output_path_error(args.output)
+    if problem is not None:
+        print(f"Workbook conversion failed: {problem}", file=sys.stderr)
+        return 2
+    return run_with_database_target(args, _convert)
