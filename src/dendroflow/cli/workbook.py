@@ -36,14 +36,15 @@ from dendroflow.configuration.workbook.reader import (
     read_workbook,
 )
 from dendroflow.configuration.workbook.schema import RESOURCE_SHEETS
-from dendroflow.configuration.workbook.serialization import (
-    WorkbookSerializationError,
-    serialize_configuration,
-)
+from dendroflow.configuration.workbook.serialization import WorkbookSerializationError
 from dendroflow.configuration.workbook.source import read_configuration_frames
 from dendroflow.configuration.workbook.validation import (
     WorkbookValidationError,
     validate_workbook,
+)
+from dendroflow.configuration.workbook.verification import (
+    WorkbookPlanVerificationError,
+    verify_generated_configuration,
 )
 from dendroflow.configuration.workbook.writer import write_workbook_export
 from dendroflow.database import use_database_target
@@ -183,9 +184,9 @@ def _convert(args: argparse.Namespace, target: DatabaseTarget) -> int:
         parsed = parse_workbook(document)
         matched = read_workbook_matches(parsed)
         generated = generate_configuration(matched)
-        serialized = serialize_configuration(generated.config)
+        verified = verify_generated_configuration(generated)
         with args.output.open("x", encoding="utf-8", newline="\n") as stream:
-            stream.write(serialized.yaml_text)
+            stream.write(verified.serialized.yaml_text)
     except (
         WorkbookReadError,
         WorkbookParseError,
@@ -196,6 +197,11 @@ def _convert(args: argparse.Namespace, target: DatabaseTarget) -> int:
         WorkbookSerializationError,
     ) as error:
         return _report_workbook_issues("Workbook conversion failed", error)
+    except WorkbookPlanVerificationError as error:
+        print("Workbook plan verification failed:", file=sys.stderr)
+        for issue in error.issues:
+            print(f"  {issue}", file=sys.stderr)
+        return 2
     except FileExistsError as error:
         print(f"Workbook conversion failed: {error}", file=sys.stderr)
         return 2
@@ -218,6 +224,10 @@ def _convert(args: argparse.Namespace, target: DatabaseTarget) -> int:
         f"{status}={totals.get(status, 0)}"
         for status in ("unchanged", "new", "update", "blocked")
     ))
+    print(
+        "Generated CONFIG plan verified against workbook intent; "
+        "no database changes were applied."
+    )
     print("Review the YAML, then use `dendroflow config plan` before applying it.")
     return 0
 

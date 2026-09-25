@@ -258,6 +258,7 @@ def install_conversion_mocks(monkeypatch):
     )
     generated = SimpleNamespace(config=object(), comparison=comparison)
     serialized = SimpleNamespace(yaml_text="sites: []\n")
+    verified = SimpleNamespace(serialized=serialized, plan=object())
     calls = {}
     monkeypatch.setattr(workbook, "get_database_target", lambda: target)
 
@@ -277,22 +278,22 @@ def install_conversion_mocks(monkeypatch):
         calls["generate"] = value
         return generated
 
-    def serialize(value):
-        calls["serialize"] = value
-        return serialized
+    def verify(value):
+        calls["verify"] = value
+        return verified
 
     monkeypatch.setattr(workbook, "read_workbook", read)
     monkeypatch.setattr(workbook, "parse_workbook", parse)
     monkeypatch.setattr(workbook, "read_workbook_matches", match)
     monkeypatch.setattr(workbook, "generate_configuration", generate)
-    monkeypatch.setattr(workbook, "serialize_configuration", serialize)
-    return calls, target, document, parsed, matched, generated, serialized
+    monkeypatch.setattr(workbook, "verify_generated_configuration", verify)
+    return calls, target, document, parsed, matched, generated, serialized, verified
 
 
 def test_workbook_convert_compares_and_writes_yaml(
     monkeypatch, tmp_path, capsys,
 ):
-    calls, target, document, parsed, matched, generated, serialized = install_conversion_mocks(monkeypatch)
+    calls, target, document, parsed, matched, generated, serialized, _verified = install_conversion_mocks(monkeypatch)
     workbook_path = tmp_path / "edited.xlsx"
     output = tmp_path / "desired.yaml"
 
@@ -306,12 +307,37 @@ def test_workbook_convert_compares_and_writes_yaml(
         "parse": document,
         "match": parsed,
         "generate": matched,
-        "serialize": generated.config,
+        "verify": generated,
     }
     report = capsys.readouterr().out
     assert "Scope: all" in report
     assert "unchanged=1, new=1, update=1, blocked=0" in report
     assert "config plan" in report
+
+
+def test_workbook_convert_withholds_yaml_when_plan_verification_fails(
+    monkeypatch, tmp_path, capsys,
+):
+    from dendroflow.configuration.workbook.verification import (
+        WorkbookPlanVerificationError,
+    )
+
+    install_conversion_mocks(monkeypatch)
+    monkeypatch.setattr(
+        workbook,
+        "verify_generated_configuration",
+        lambda _generated: (_ for _ in ()).throw(
+            WorkbookPlanVerificationError(("unexpected CREATE for sites[0]",))
+        ),
+    )
+    output = tmp_path / "not-written.yaml"
+
+    assert main([
+        "config", "workbook", "convert", "edited.xlsx", str(output),
+    ]) == 2
+
+    assert not output.exists()
+    assert "unexpected CREATE for sites[0]" in capsys.readouterr().err
 
 
 def test_workbook_convert_rejects_existing_output_before_database_access(

@@ -104,11 +104,15 @@ Conversion checks the workbook against the current configured database target,
 compares existing rows with current records, and stops on missing IDs,
 out-of-scope identities, unsupported edits, or other blocking diagnostics. It
 then assembles and validates the CONFIG model and confirms that the YAML
-round-trips to the same model. The output must end in `.yaml` or `.yml`; its
+round-trips to the same model. Before writing the output, it also resolves the
+generated configuration against the current database state and verifies that
+the resulting plan matches the workbook changes. If verification fails, no
+YAML file is written. This step performs database reads only; it does not
+prepare or apply database writes. The output must end in `.yaml` or `.yml`; its
 directory must exist and an existing file is never overwritten. The command
-reports the target, workbook scope, and counts of unchanged, new, updated, and
-blocked rows. New declarations and updates are proposals; the output is not an
-executable plan and makes no database changes.
+reports the target, workbook scope, comparison counts, and successful plan
+verification. New declarations and updates remain proposals; the output is not
+an executable authorization to apply.
 
 Review the generated YAML and its planned operations before applying:
 
