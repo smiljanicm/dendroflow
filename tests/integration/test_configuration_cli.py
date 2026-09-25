@@ -8,6 +8,7 @@ from uuid import uuid4
 import psycopg
 import pytest
 import yaml
+from openpyxl import load_workbook
 from psycopg import sql
 from psycopg.types.json import Jsonb
 
@@ -331,6 +332,136 @@ def test_workbook_unchanged_export_validate_convert_plan_apply_is_read_only(
     assert "Workbook valid:" in captured.out or "METADATA: NOT_REQUIRED" in captured.out
     assert not writes
     assert workbook_mutation_state(case) == before
+
+
+def test_workbook_supported_updates_and_new_related_rows(cli_case, monkeypatch, capsys):
+    case = cli_case
+    monkeypatch.setenv("DENDROFLOW_ENVIRONMENT", "local")
+    document = full_config(case)
+    document["sites"][0]["description"] = "Description to clear"
+    write_config(case, document)
+    seeded = run_cli("config", "apply", case.path, "--yes")
+    assert_success(seeded)
+
+    site_id = metadata_state(case)["sites"][0]
+    before = workbook_mutation_state(case)
+    workbook_path = case.path.with_suffix(".xlsx")
+    yaml_path = case.path.with_name("workbook-changes.yaml")
+    assert main([
+        "config", "workbook", "export", "--site-id", str(site_id),
+        str(workbook_path),
+    ]) == 0
+    capsys.readouterr()
+
+    with connect("dendroflow_metadata") as connection:
+        original_relationship = connection.execute(
+            """
+            SELECT d.sensor_id, d.location_id
+            FROM deployments AS d
+            JOIN variables AS v USING (variable_id)
+            WHERE v.variable = %s
+            """,
+            (case.tag,),
+        ).fetchone()
+
+    workbook = load_workbook(workbook_path)
+    try:
+        sites = workbook["sites"]
+        site_columns = {cell.value: cell.column for cell in sites[1]}
+        site_row = next(
+            row
+            for row in range(2, sites.max_row + 1)
+            if sites.cell(row, site_columns["site_id"]).value == str(site_id)
+        )
+        sites.cell(site_row, site_columns["site_code"], case.codes[2])
+        sites.cell(site_row, site_columns["name"], "Revised site name")
+        sites.cell(site_row, site_columns["description"], None)
+
+        variables = workbook["variables"]
+        variable_values = {
+            "variable_id": None,
+            "ref": "new_variable",
+            "row_role": "edit",
+            "variable": case.codes[1],
+            "derived": False,
+            "description": None,
+        }
+        variables.append([
+            variable_values[cell.value]
+            for cell in variables[1]
+        ])
+
+        deployments = workbook["deployments"]
+        deployment_columns = {cell.value: cell.column for cell in deployments[1]}
+        deployment_values = {
+            "deployment_id": None,
+            "ref": "new_deployment",
+            "row_role": "edit",
+            "sensor": deployments.cell(2, deployment_columns["sensor"]).value,
+            "location": deployments.cell(2, deployment_columns["location"]).value,
+            "variable": "new_variable",
+            "valid_from": "2027-01-01T00:00:00Z",
+            "valid_to": None,
+        }
+        deployments.append([
+            deployment_values[cell.value]
+            for cell in deployments[1]
+        ])
+        workbook.save(workbook_path)
+    finally:
+        workbook.close()
+
+    assert main(["config", "workbook", "validate", str(workbook_path)]) == 0
+    capsys.readouterr()
+    converted = main([
+        "config", "workbook", "convert", str(workbook_path), str(yaml_path),
+    ])
+    converted_output = capsys.readouterr()
+    assert converted == 0, converted_output.out + converted_output.err
+
+    planned = main(["config", "plan", str(yaml_path)])
+    plan_output = capsys.readouterr().out
+    assert planned == 0
+    assert "CREATE=2" in plan_output
+    assert "UPDATE=1" in plan_output
+
+    unconfirmed = main(["config", "apply", str(yaml_path), "--yes"])
+    unconfirmed_output = capsys.readouterr()
+    assert unconfirmed == 3
+    assert "--confirm-identity-changes is required" in unconfirmed_output.err
+    assert workbook_mutation_state(case) == before
+
+    applied = main([
+        "config", "apply", str(yaml_path), "--yes",
+        "--confirm-identity-changes",
+    ])
+    applied_output = capsys.readouterr()
+    assert applied == 0, applied_output.out + applied_output.err
+    assert "METADATA: COMMITTED" in applied_output.out
+
+    assert site_state(case) == {
+        case.codes[2]: (site_id, "Revised site name"),
+    }
+    with connect("dendroflow_metadata") as connection:
+        description = connection.execute(
+            "SELECT description FROM sites WHERE site_id = %s",
+            (site_id,),
+        ).fetchone()[0]
+        variable = connection.execute(
+            "SELECT variable_id FROM variables WHERE variable = %s",
+            (case.codes[1],),
+        ).fetchone()[0]
+        deployment = connection.execute(
+            """
+            SELECT sensor_id, location_id
+            FROM deployments
+            WHERE variable_id = %s
+            """,
+            (variable,),
+        ).fetchone()
+    assert description is None
+    assert deployment == original_relationship
+    assert len(metadata_state(case)["deployments"]) == len(before[0]["deployments"]) + 1
 
 
 def test_identity_confirmation_preserves_existing_id(cli_case, capsys):

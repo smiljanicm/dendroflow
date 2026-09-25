@@ -340,6 +340,17 @@ DENDROFLOW_INTEGRATION=1 pytest -q tests/integration/test_configuration_cli.py::
 The opt-in integration suite writes and removes its uniquely named fixture
 records, so point the configured connection settings at test databases.
 
+G6.b exercises a site-scoped workbook that clears a nullable description,
+renames the site identity, and adds a variable plus a deployment that references
+it. The first apply must require identity-change confirmation and leave the
+database unchanged. The confirmed apply must preserve the site's database ID,
+clear the description, and create only the requested related records. Run it
+with:
+
+```bash
+DENDROFLOW_INTEGRATION=1 pytest -q tests/integration/test_configuration_cli.py::test_workbook_supported_updates_and_new_related_rows
+```
+
 Run the G1 contract tests with:
 
 ```bash
