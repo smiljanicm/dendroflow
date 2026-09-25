@@ -836,6 +836,130 @@ The package `__init__.py` provides the stable public ingestion API while impleme
 
 ---
 
+## Growing-file ingestion contract (GF1 design)
+
+This section defines the intended behaviour for registered source files that
+receive new rows over time. It is a design contract for the next implementation
+phase; the current ingestion implementation does not yet support safe append
+ingestion. The CONFIG MVP tag remains unchanged.
+
+### Snapshot boundary
+
+Each ingestion invocation processes one immutable snapshot of a registered
+file. It fingerprints, reads, records provenance for, and resumes from the same
+snapshot. Appends made after the snapshot boundary are handled by a later run.
+
+For the initial implementation, a source is eligible for capture after its
+size and modification time remain stable for a configured settle interval. The
+capture records the initial file identity, size and modification time, copies
+exactly the captured byte range into a persistent DendroFlow staging area, and
+checks the source metadata again. A size decrease, file replacement, or change
+during capture invalidates the capture; retry later or report that the source
+is still changing. A snapshot is identified by its content hash and byte size.
+
+Only newline-terminated physical records are eligible for parsing. An
+incomplete trailing physical line is left for the next snapshot. This relies on
+the supported CSV contract of one physical line per record; multiline quoted
+CSV records remain unsupported. A later append must not alter bytes already
+captured in a snapshot. Snapshots referenced by running or resumable ingestion
+runs must remain available across process restarts. Remove a staged snapshot
+only after no run can resume from it and its file version is retained in the
+RAW database.
+
+The staging area must be configurable, persistent across runs, and have
+sufficient capacity for the largest source snapshot being ingested. Capture
+must fail clearly if staging storage is unavailable or full. The settle
+interval and staging location are operational settings, not workbook fields.
+
+### Observation identity and overlap
+
+The RAW database identity remains (location_id, variable_id, timestamp).
+Compare incoming values after the existing timestamp and numeric normalization,
+using exact equality of the normalized stored values. Two missing numeric values
+(normalized to PostgreSQL NaN) compare equal. Do not use a numeric tolerance.
+
+For each incoming identity:
+
+| Existing RAW observation | Required result |
+| --- | --- |
+| No observation exists | Insert the observation with the new run and source-line provenance. |
+| Same interface and equal normalized value | Count it as unchanged; do not insert or replace it. Keep its original provenance. |
+| Different value | Report a data conflict with identity, incoming source line, stored value and incoming value; fail the current batch without overwriting the stored value. |
+| Different interface | Report a source-mapping conflict; fail the current batch without changing the stored observation. |
+
+Within one snapshot, repeated identities with equal values and the same
+interface are counted once as an insert or unchanged observation; retain the
+first physical source line and report the repeated rows. Repeated identities
+with conflicting values or interfaces fail the batch as data conflicts.
+
+All inserts and the batch completion checkpoint remain one transaction. If a
+batch contains a conflict, none of that batch's inserts or checkpoint changes
+commit. Earlier completed batches remain committed and visible. A retry must
+not turn a deterministic conflict into a successful write; conflicts require
+review and a new ingestion request after the source or configuration is
+corrected.
+
+### Growth, rewrite, and recovery
+
+Appending complete rows creates a new file version and a new ingestion run. The
+run compares observations already present in RAW against the new snapshot,
+leaves matching overlaps untouched, and inserts only new observations. It must
+not rely only on the last timestamp: late-arriving older observations can be
+valid and must be considered.
+
+A snapshot smaller than the latest accepted snapshot for the logical file is a
+truncation or regression and is rejected for review; it never deletes RAW
+observations. A changed value or source mapping for an already stored identity
+is a conflict. This policy also detects rewritten historical content when the
+rewritten row retains its observation identity. Corrections and deletion of
+stored observations require a separately reviewed future workflow.
+
+An interrupted run resumes against its retained snapshot and the exact
+interface, timestamp, reader, and deployment interpretation captured for that
+run. It must not switch to a newer live-file version while resuming. A later
+append is processed in a separate run after the interrupted run completes.
+Only one ingestion worker may process a given registered file at a time.
+
+### Run results
+
+A successful result reports at least the source file and snapshot hash, run ID,
+interfaces, source rows examined, observations inserted, observations unchanged,
+repeated identities, and any deferred trailing line. Failures report the
+snapshot/run/batch where possible, the error category, and source line and
+observation identity for data conflicts. These counts distinguish routine
+append ingestion from corrections that need review.
+
+### GF1 acceptance cases
+
+The contract is accepted when automated unit and PostgreSQL integration tests
+cover all of the following:
+
+1. Ingest a 100-row snapshot, append 20 complete rows, ingest again, and finish
+   with 120 unique observations. The original 100 keep their original
+   provenance; the 20 new observations refer to the second snapshot and run.
+2. Repeat an already ingested full snapshot: the second invocation is a no-op
+   for observation writes and reports the overlap as unchanged.
+3. Change the value of a previously ingested timestamp: report a conflict,
+   preserve the stored value, and roll back every write in the conflicting
+   batch.
+4. Repeat an identity within one snapshot with equal and conflicting values;
+   verify the deduplication and conflict rules above.
+5. Capture a file with an incomplete final physical line, then append the rest
+   of that record and a newline; ingest the record only from the later complete
+   snapshot.
+6. Truncate or replace a registered source while or after it is captured;
+   reject the regressed or invalid capture and preserve all observations.
+7. Interrupt a multi-batch run, append to the live file, then resume: finish
+   the original snapshot exactly once and process the append as a separate run.
+8. Attempt concurrent ingestion for one registered file; the second worker
+   must exit with a clear already-running result and perform no writes.
+
+These cases define scope for GF2-GF5. They do not claim that growing-file
+behaviour is implemented until those phases and the real-source acceptance
+check are complete.
+
+---
+
 # Testing
 
 The ingestion layer has two levels of automated tests.
