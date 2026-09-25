@@ -32,6 +32,12 @@ def migrate(_args: argparse.Namespace) -> int:
     return 0
 
 
+def workbook_help(args: argparse.Namespace) -> int:
+    """Show workbook commands when only the command group was supplied."""
+    args.workbook_parser.print_help()
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the CLI; argparse exits for help and usage errors."""
     parser = argparse.ArgumentParser(
@@ -99,6 +105,16 @@ def main(argv: list[str] | None = None) -> int:
         help="Explicitly authorize identity-changing updates.",
     )
     apply_parser.set_defaults(handler=apply)
+
+    workbook_parser = config_commands.add_parser(
+        "workbook",
+        help="Export and process configuration workbooks.",
+        description="Manage the Excel configuration workbook workflow.",
+    )
+    workbook_parser.set_defaults(
+        handler=workbook_help,
+        workbook_parser=workbook_parser,
+    )
 
     args = parser.parse_args(argv)
     return args.handler(args)

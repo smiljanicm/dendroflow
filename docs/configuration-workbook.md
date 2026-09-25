@@ -13,7 +13,9 @@ initial-label consistency without database access. G4.a matches current database
 identities and scope. G4.b compares fields and reports new, unchanged, update,
 and blocked rows. G4.c builds public lookups from current identities and checks
 their uniqueness in the full source snapshot. G4.d assembles a validated CONFIG
-model. YAML output/live verification and workbook CLI commands follow in G4.e-G5.
+model. G4.e serializes YAML and checks its round trip. G4.f resolves and verifies
+the generated plan. G5.a adds shared environment handling and the workbook CLI
+group; export, validation, and conversion commands follow in G5.b-G5.e.
 The rules below are requirements for those implementations, not claims that
 header validation already enforces them.
 
@@ -21,6 +23,30 @@ The workflow is: fresh database export, Excel editing, comparison against the
 current database, generated YAML, reviewed CONFIG plan, confirmed apply.
 Each editing session starts with a fresh export. There is no baseline file,
 automatic deletion, hash watcher, or automatic application.
+
+## CLI environment foundation (G5.a)
+
+Workbook commands require the non-secret `DENDROFLOW_ENVIRONMENT` label in the
+process environment or the project's `.env` file. Process environment values
+take precedence. The label must contain 1-128 characters with no surrounding
+whitespace or control characters. There is no implicit default.
+
+The label identifies the configured METADATA/RAW database pair for workbook
+provenance and mismatch checks. It does not authenticate the caller or verify
+which server a connection reaches. The existing PostgreSQL host, port, user,
+and password settings continue to configure the connections. Database-backed
+workbook commands capture the label and connection settings once and use that
+snapshot for each connection in the command. Offline workbook validation needs
+the label but does not require PostgreSQL credentials.
+
+The command group is available for discovery:
+
+```bash
+dendroflow config workbook --help
+```
+
+G5.b-G5.e add workbook export, offline validation, and YAML conversion under
+this group.
 
 ## Sheets and headers
 

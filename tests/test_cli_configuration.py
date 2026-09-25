@@ -165,6 +165,25 @@ def test_config_help(argv, capsys):
     assert captured.err == ""
 
 
+def test_workbook_command_group_is_registered(capsys):
+    with pytest.raises(SystemExit) as caught:
+        main(["config", "workbook", "--help"])
+
+    assert caught.value.code == 0
+    captured = capsys.readouterr()
+    assert "Excel configuration workbook workflow" in captured.out
+    assert captured.err == ""
+
+
+def test_bare_workbook_group_shows_help_until_a_subcommand_is_given(capsys):
+    assert main(["config", "workbook"]) == 2
+    captured = capsys.readouterr()
+    assert "usage: dendroflow config workbook" in captured.out
+    assert "Manage the Excel configuration workbook workflow" in captured.out
+    assert "{}" not in captured.out
+    assert captured.err == ""
+
+
 @pytest.mark.parametrize(
     "argv",
     [
