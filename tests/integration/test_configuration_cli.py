@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
+import psycopg
 import pytest
 import yaml
 from psycopg import sql
@@ -160,6 +161,41 @@ def raw_state(case):
     return files, interfaces
 
 
+def workbook_mutation_state(case):
+    """Capture fixture rows and xmin values to detect inserts/updates/deletes."""
+    with connect("dendroflow_metadata") as connection:
+        metadata = {
+            table: tuple(
+                row
+                for row in connection.execute(
+                    sql.SQL("SELECT {}, xmin::text FROM {} WHERE {} ORDER BY {}").format(
+                        sql.Identifier(primary_key),
+                        sql.Identifier(table),
+                        sql.SQL(condition),
+                        sql.Identifier(primary_key),
+                    ),
+                    (case.codes,),
+                ).fetchall()
+            )
+            for table, primary_key, condition in METADATA_TABLES
+        }
+    with connect("dendroflow_raw") as connection:
+        files = connection.execute(
+            "SELECT file_id, xmin::text FROM files WHERE filepath = %s ORDER BY file_id",
+            (str(case.source),),
+        ).fetchall()
+        interfaces = connection.execute(
+            """
+            SELECT interface_id, xmin::text, file_id, deployment_id
+            FROM sensor_file_interfaces
+            WHERE file_id IN (SELECT file_id FROM files WHERE filepath = %s)
+            ORDER BY interface_id
+            """,
+            (str(case.source),),
+        ).fetchall()
+    return metadata, tuple(files), tuple(interfaces)
+
+
 def assert_empty(case):
     assert not any(metadata_state(case).values())
     assert raw_state(case) == ([], [])
@@ -232,6 +268,69 @@ def test_yaml_cli_workflow_and_repeat_apply(cli_case):
     assert "RAW: NOT_REQUIRED" in repeated_apply.stdout
     assert metadata_state(case) == metadata_before
     assert raw_state(case) == raw_before
+
+
+def test_workbook_unchanged_export_validate_convert_plan_apply_is_read_only(
+    cli_case, monkeypatch, capsys,
+):
+    case = cli_case
+    monkeypatch.setenv("DENDROFLOW_ENVIRONMENT", "local")
+    write_config(case, full_config(case))
+    seeded = run_cli("config", "apply", case.path, "--yes")
+    assert_success(seeded)
+
+    site_id = metadata_state(case)["sites"][0]
+    workbook_path = case.path.with_suffix(".xlsx")
+    yaml_path = case.path.with_name("workbook-config.yaml")
+    before = workbook_mutation_state(case)
+    writes = []
+    original_connect = psycopg.connect
+
+    class ObservedConnection:
+        def __init__(self, connection, database):
+            self._connection = connection
+            self._database = database
+
+        def __enter__(self):
+            self._connection.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self._connection.__exit__(*args)
+
+        def __getattr__(self, name):
+            return getattr(self._connection, name)
+
+        def execute(self, query, *args, **kwargs):
+            cursor = self._connection.execute(query, *args, **kwargs)
+            status = cursor.statusmessage or ""
+            if status.partition(" ")[0].upper() in {
+                "INSERT", "UPDATE", "DELETE", "MERGE", "TRUNCATE",
+            }:
+                writes.append((self._database, status))
+            return cursor
+
+    def observed_connect(*args, **kwargs):
+        connection = original_connect(*args, **kwargs)
+        return ObservedConnection(connection, kwargs.get("dbname", "unknown"))
+
+    monkeypatch.setattr(psycopg, "connect", observed_connect)
+
+    commands = (
+        ["config", "workbook", "export", "--site-id", str(site_id), str(workbook_path)],
+        ["config", "workbook", "validate", str(workbook_path)],
+        ["config", "workbook", "convert", str(workbook_path), str(yaml_path)],
+        ["config", "plan", str(yaml_path)],
+        ["config", "apply", str(yaml_path)],
+    )
+    for command in commands:
+        result = main(command)
+        captured = capsys.readouterr()
+        assert result == 0, captured.out + captured.err
+
+    assert "Workbook valid:" in captured.out or "METADATA: NOT_REQUIRED" in captured.out
+    assert not writes
+    assert workbook_mutation_state(case) == before
 
 
 def test_identity_confirmation_preserves_existing_id(cli_case, capsys):

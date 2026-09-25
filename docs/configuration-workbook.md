@@ -326,6 +326,20 @@ Additional cases cover reordered sheets/rows/columns, explicit nulls, new relate
 rows, stable IDs across supported renames, shared resources, unsupported edits,
 wrong environments, invalid values, missing targets, and concurrent changes.
 
+G6.a adds an opt-in PostgreSQL CLI acceptance test for the unchanged site-scope
+round trip. It creates uniquely named fixture rows through CONFIG apply, then
+runs workbook export, validate, convert, plan, and apply. It tracks SQL write
+statuses and checks fixture row transaction IDs and contents before and after.
+The test cleans its fixture through the existing integration-test teardown.
+Run it against the configured integration databases with:
+
+```bash
+DENDROFLOW_INTEGRATION=1 pytest -q tests/integration/test_configuration_cli.py::test_workbook_unchanged_export_validate_convert_plan_apply_is_read_only
+```
+
+The opt-in integration suite writes and removes its uniquely named fixture
+records, so point the configured connection settings at test databases.
+
 Run the G1 contract tests with:
 
 ```bash
