@@ -17,6 +17,9 @@ model. G4.e serializes YAML and checks its round trip. G4.f resolves and verifie
 the generated plan. G5.a adds shared environment handling and the workbook CLI
 group. G5.b adds populated XLSX export; offline validation and YAML conversion
 follow in G5.c-G5.e.
+G6.a-G6.d add opt-in PostgreSQL acceptance coverage for unchanged exports,
+supported edits and additions, RAW interface creation, and blocked unsupported
+edits. G6.e documents the final G-phase verification gate.
 The rules below are requirements for those implementations, not claims that
 header validation already enforces them.
 
@@ -367,6 +370,21 @@ fixtures remain unchanged. Run it with:
 ```bash
 DENDROFLOW_INTEGRATION=1 pytest -q tests/integration/test_configuration_cli.py::test_workbook_unsupported_edit_stops_before_apply
 ```
+
+G6.e closes the phase with a final verification gate. Run the normal checks,
+then run the complete CLI integration module against configured, migrated test
+databases:
+
+```bash
+ruff check src tests
+pytest -q
+DENDROFLOW_INTEGRATION=1 pytest -q tests/integration/test_configuration_cli.py
+```
+
+The normal suite skips PostgreSQL integration tests by default. The opt-in CLI
+module runs the YAML and workbook acceptance cases, including G6.a-G6.d. It
+creates uniquely named records and removes them during fixture teardown; use
+test databases. G is complete when all three checks pass.
 
 Run the G1 contract tests with:
 

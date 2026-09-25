@@ -86,6 +86,25 @@ execution approval. Neither flag bypasses conflicts or preparation checks.
 A plan containing only REUSE operations needs no write confirmation and reports
 its stages as NOT_REQUIRED.
 
+## Workbook workflow
+
+For spreadsheet-based configuration work, export a workbook, validate it,
+convert its changes to YAML, review the resulting CONFIG plan, and apply it:
+
+```bash
+dendroflow config workbook export --site-id 2 control.xlsx
+dendroflow config workbook validate control.xlsx
+dendroflow config workbook convert control.xlsx desired-config.yaml
+dendroflow config plan desired-config.yaml
+dendroflow config apply desired-config.yaml
+```
+
+The workbook's environment label must match the configured target environment.
+Export and conversion compare against current database state; conversion writes
+YAML only after verifying the resolved CONFIG plan. Review the YAML and plan
+before applying. See [Configuration workbook workflow](configuration-workbook.md)
+for workbook scope, supported changes, diagnostics, and detailed examples.
+
 ## Declarations and explicit updates
 
 A declaration requests creation or compatible reuse. Changing a declaration's
@@ -167,8 +186,8 @@ CLI unit tests run without PostgreSQL:
 pytest -q tests/test_cli*.py
 ```
 
-The six CLI integration tests use unique records and remove their own records
-after each test. Use configured, migrated development/test databases:
+The CLI integration tests use unique records and remove their own records after
+each test. Use configured, migrated development/test databases:
 
 ```bash
 DENDROFLOW_INTEGRATION=1 pytest -q \
@@ -178,11 +197,14 @@ DENDROFLOW_INTEGRATION=1 pytest -q \
   tests/integration/test_configuration_combined_apply.py
 ```
 
-The CLI integration module covers the module entry point and full YAML workflow,
-repeat apply, identity confirmation, conflict rejection, declined execution,
-stale-update rollback, and partial completion after a concurrent RAW insertion.
-Race tests insert controlled database changes after review to make these cases
-deterministic. Uncertain commit and cleanup failures remain covered by unit tests.
+The CLI integration module covers the module entry point, YAML workflow, and
+workbook acceptance cases for unchanged round trips, supported updates and
+additions, interfaces on existing files, and rejection of unsupported edits. It
+also tests repeat apply, identity confirmation, conflict rejection, declined
+execution, stale-update rollback, and partial completion after a concurrent RAW
+insertion. Race tests insert controlled database changes after review to make
+these cases deterministic. Uncertain commit and cleanup failures remain covered
+by unit tests.
 
 Integration tests skip by default when `DENDROFLOW_INTEGRATION` is not `1`.
 JSON output, saved executable plans, and an interactive configuration wizard
