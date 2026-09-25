@@ -360,6 +360,14 @@ preserving the file's database ID. Run it with:
 DENDROFLOW_INTEGRATION=1 pytest -q tests/integration/test_configuration_cli.py::test_workbook_adds_interface_to_existing_file
 ```
 
+G6.d verifies that an unsupported edit to an existing location-label row is
+rejected during conversion. No YAML output is written and the METADATA and RAW
+fixtures remain unchanged. Run it with:
+
+```bash
+DENDROFLOW_INTEGRATION=1 pytest -q tests/integration/test_configuration_cli.py::test_workbook_unsupported_edit_stops_before_apply
+```
+
 Run the G1 contract tests with:
 
 ```bash

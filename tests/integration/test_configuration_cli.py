@@ -573,6 +573,45 @@ def test_workbook_adds_interface_to_existing_file(cli_case, monkeypatch, capsys)
     assert added_interfaces[0][1:] == (original_file_id, new_deployment_id)
 
 
+def test_workbook_unsupported_edit_stops_before_apply(cli_case, monkeypatch, capsys):
+    case = cli_case
+    monkeypatch.setenv("DENDROFLOW_ENVIRONMENT", "local")
+    write_config(case, full_config(case))
+    seeded = run_cli("config", "apply", case.path, "--yes")
+    assert_success(seeded)
+
+    site_id = metadata_state(case)["sites"][0]
+    before = workbook_mutation_state(case)
+    workbook_path = case.path.with_suffix(".xlsx")
+    yaml_path = case.path.with_name("unsupported-edit.yaml")
+    assert main([
+        "config", "workbook", "export", "--site-id", str(site_id),
+        str(workbook_path),
+    ]) == 0
+    capsys.readouterr()
+
+    workbook = load_workbook(workbook_path)
+    try:
+        labels = workbook["location_labels"]
+        columns = {cell.value: cell.column for cell in labels[1]}
+        labels.cell(2, columns["label"]).value = "L1 revised"
+        workbook.save(workbook_path)
+    finally:
+        workbook.close()
+
+    assert main(["config", "workbook", "validate", str(workbook_path)]) == 0
+    capsys.readouterr()
+    converted = main([
+        "config", "workbook", "convert", str(workbook_path), str(yaml_path),
+    ])
+    conversion_output = capsys.readouterr()
+    assert converted == 2
+    assert "Workbook conversion failed:" in conversion_output.err
+    assert "changes to this existing field are not supported" in conversion_output.err
+    assert not yaml_path.exists()
+    assert workbook_mutation_state(case) == before
+
+
 def test_identity_confirmation_preserves_existing_id(cli_case, capsys):
     case = cli_case
     database_id = seed_site(case)
