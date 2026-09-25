@@ -75,6 +75,23 @@ configured databases and does not write to them. The workbook carries the
 captured environment label as provenance; this label does not authenticate or
 verify the server identity.
 
+## Offline workbook validation CLI (G5.c)
+
+Validate an edited workbook before comparing it with the live database or
+converting it to YAML:
+
+```bash
+dendroflow config workbook validate ./control.xlsx
+```
+
+Validation checks the XLSX structure and metadata, target-environment label,
+cell values, row identities, references, ownership, and declared scope. It
+prints located diagnostics and exits with a nonzero status when a check fails.
+The command is offline: it requires no PostgreSQL credentials and does not
+confirm that IDs, ownership, immutable fields, or row roles still match the
+database. A successful result does not authorize changes; continue with the
+database comparison and reviewed CONFIG plan.
+
 ## Sheets and headers
 
 Exports contain `guide`, `workbook_info`, and all eleven resource sheets below.

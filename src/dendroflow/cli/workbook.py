@@ -13,12 +13,24 @@ from dendroflow.config import (
     get_database_target,
     get_target_environment,
 )
+from dendroflow.configuration.workbook.parsing import (
+    WorkbookParseError,
+    parse_workbook,
+)
 from dendroflow.configuration.workbook.preparation import (
     WorkbookExportError,
     prepare_workbook_export,
 )
+from dendroflow.configuration.workbook.reader import (
+    WorkbookReadError,
+    read_workbook,
+)
 from dendroflow.configuration.workbook.schema import RESOURCE_SHEETS
 from dendroflow.configuration.workbook.source import read_configuration_frames
+from dendroflow.configuration.workbook.validation import (
+    WorkbookValidationError,
+    validate_workbook,
+)
 from dendroflow.configuration.workbook.writer import write_workbook_export
 from dendroflow.database import use_database_target
 
@@ -96,3 +108,46 @@ def export_workbook(args: argparse.Namespace) -> int:
         print(f"Workbook export failed: {problem}", file=sys.stderr)
         return 2
     return run_with_database_target(args, _export)
+
+
+def _report_workbook_issues(prefix: str, error: ValueError) -> int:
+    issues = getattr(error, "issues", ())
+    if issues:
+        print(f"{prefix}:", file=sys.stderr)
+        for issue in issues:
+            location = issue.sheet or "workbook"
+            if issue.coordinate:
+                location += f"!{issue.coordinate}"
+            print(f"  {location}: {issue.message}", file=sys.stderr)
+    else:
+        print(f"{prefix}: {error}", file=sys.stderr)
+    return 2
+
+
+def validate_workbook_file(args: argparse.Namespace) -> int:
+    """Validate workbook structure and relationships without database IO."""
+    environment = require_workbook_environment()
+    if environment is None:
+        return 2
+
+    try:
+        document = read_workbook(args.path, expected_environment=environment)
+        parsed = parse_workbook(document)
+        validate_workbook(parsed)
+    except (WorkbookReadError, WorkbookParseError, WorkbookValidationError) as error:
+        return _report_workbook_issues("Workbook validation failed", error)
+    except (OSError, TypeError, ValueError) as error:
+        print(f"Workbook validation failed: {error}", file=sys.stderr)
+        return 2
+
+    print(f"Workbook valid: {args.path}")
+    print(f"Target environment: {parsed.metadata.target_environment}")
+    print(f"Scope: {parsed.metadata.scope}")
+    if parsed.metadata.scope == "sites":
+        print(f"Selected site IDs: {', '.join(map(str, parsed.metadata.site_ids))}")
+    print("Rows: " + ", ".join(
+        f"{spec.name}={len(parsed.frames[spec.name])}"
+        for spec in RESOURCE_SHEETS
+    ))
+    print("Checks: workbook structure, cell values, identities, relationships, and scope")
+    return 0

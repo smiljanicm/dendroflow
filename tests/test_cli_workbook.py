@@ -138,3 +138,101 @@ def test_export_rejects_bad_extension_before_database_access(monkeypatch, tmp_pa
     assert main([
         "config", "workbook", "export", str(tmp_path / "control.csv"), "--all",
     ]) == 2
+
+
+def install_validation_mocks(monkeypatch, *, scope="all", target_environment="local"):
+    metadata = SimpleNamespace(
+        target_environment=target_environment,
+        scope=scope,
+        site_ids=(2, 3) if scope == "sites" else (),
+    )
+    parsed = SimpleNamespace(
+        metadata=metadata,
+        frames={name: [] for name in (
+            "sites", "location_types", "sensor_types", "variables", "sensor_models",
+            "sensors", "locations", "location_labels", "deployments", "files", "interfaces",
+        )},
+    )
+    document = SimpleNamespace(metadata=metadata)
+    calls = {}
+    monkeypatch.setattr(workbook, "get_target_environment", lambda: target_environment)
+
+    def read(path, *, expected_environment):
+        calls["read"] = (path, expected_environment)
+        return document
+
+    def parse(received_document):
+        calls["parse"] = received_document
+        return parsed
+
+    def validate(received_parsed):
+        calls["validate"] = received_parsed
+
+    monkeypatch.setattr(workbook, "read_workbook", read)
+    monkeypatch.setattr(workbook, "parse_workbook", parse)
+    monkeypatch.setattr(workbook, "validate_workbook", validate)
+    return calls, document, parsed
+
+
+def test_workbook_validate_runs_offline_checks_and_reports_scope(
+    monkeypatch, tmp_path, capsys,
+):
+    calls, document, parsed = install_validation_mocks(
+        monkeypatch, scope="sites",
+    )
+    path = tmp_path / "sites.xlsx"
+
+    assert main(["config", "workbook", "validate", str(path)]) == 0
+
+    assert calls == {
+        "read": (path, "local"),
+        "parse": document,
+        "validate": parsed,
+    }
+    report = capsys.readouterr().out
+    assert "Workbook valid:" in report
+    assert "Scope: sites" in report
+    assert "Selected site IDs: 2, 3" in report
+    assert "interfaces=0" in report
+
+
+def test_workbook_validate_reports_located_issues(monkeypatch, tmp_path, capsys):
+    from dendroflow.configuration.workbook.reader import (
+        WorkbookIssue,
+        WorkbookReadError,
+    )
+
+    monkeypatch.setattr(workbook, "get_target_environment", lambda: "local")
+    monkeypatch.setattr(
+        workbook,
+        "read_workbook",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            WorkbookReadError((WorkbookIssue("sites", "A2", "bad site ID"),))
+        ),
+    )
+
+    assert main(["config", "workbook", "validate", str(tmp_path / "bad.xlsx")]) == 2
+
+    assert "sites!A2: bad site ID" in capsys.readouterr().err
+
+
+def test_workbook_validate_needs_no_database_credentials(monkeypatch, tmp_path):
+    from dendroflow import config
+
+    monkeypatch.setattr(config, "load_env", lambda _path: {})
+    monkeypatch.delenv("DENDROFLOW_ENVIRONMENT", raising=False)
+    monkeypatch.delenv("POSTGRES_USER", raising=False)
+    monkeypatch.delenv("POSTGRES_PASSWORD", raising=False)
+    metadata = SimpleNamespace(target_environment="local", scope="all", site_ids=())
+    parsed = SimpleNamespace(
+        metadata=metadata,
+        frames={name: [] for name in (
+            "sites", "location_types", "sensor_types", "variables", "sensor_models",
+            "sensors", "locations", "location_labels", "deployments", "files", "interfaces",
+        )},
+    )
+    monkeypatch.setattr(workbook, "read_workbook", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(workbook, "parse_workbook", lambda _document: parsed)
+    monkeypatch.setattr(workbook, "validate_workbook", lambda _parsed: None)
+
+    assert main(["config", "workbook", "validate", str(tmp_path / "ok.xlsx")]) == 0

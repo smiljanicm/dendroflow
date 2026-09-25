@@ -6,7 +6,7 @@ from dendroflow.database import DATABASES
 from dendroflow.migrations import migrate_database
 
 from .configuration import apply, plan, validate
-from .workbook import export_workbook
+from .workbook import export_workbook, validate_workbook_file
 
 
 def migrate(_args: argparse.Namespace) -> int:
@@ -140,6 +140,18 @@ def main(argv: list[str] | None = None) -> int:
         help="Export a site and its configuration closure; may be repeated.",
     )
     export_parser.set_defaults(handler=export_workbook)
+
+    workbook_validate_parser = workbook_commands.add_parser(
+        "validate",
+        help="Validate a workbook without database access.",
+        description="Check workbook structure, values, identities, relationships, and declared scope.",
+    )
+    workbook_validate_parser.add_argument(
+        "path",
+        type=Path,
+        help="Path to the .xlsx workbook.",
+    )
+    workbook_validate_parser.set_defaults(handler=validate_workbook_file)
 
     args = parser.parse_args(argv)
     return args.handler(args)
