@@ -15,7 +15,8 @@ and blocked rows. G4.c builds public lookups from current identities and checks
 their uniqueness in the full source snapshot. G4.d assembles a validated CONFIG
 model. G4.e serializes YAML and checks its round trip. G4.f resolves and verifies
 the generated plan. G5.a adds shared environment handling and the workbook CLI
-group; export, validation, and conversion commands follow in G5.b-G5.e.
+group. G5.b adds populated XLSX export; offline validation and YAML conversion
+follow in G5.c-G5.e.
 The rules below are requirements for those implementations, not claims that
 header validation already enforces them.
 
@@ -26,10 +27,12 @@ automatic deletion, hash watcher, or automatic application.
 
 ## CLI environment foundation (G5.a)
 
-Workbook commands require the non-secret `DENDROFLOW_ENVIRONMENT` label in the
+Workbook commands use the non-secret `DENDROFLOW_ENVIRONMENT` label from the
 process environment or the project's `.env` file. Process environment values
-take precedence. The label must contain 1-128 characters with no surrounding
-whitespace or control characters. There is no implicit default.
+take precedence. If the label is omitted, it defaults to `local`. Set the
+variable to a different label when targeting another configured database pair.
+The label must contain 1-128 characters with no surrounding whitespace or
+control characters.
 
 The label identifies the configured METADATA/RAW database pair for workbook
 provenance and mismatch checks. It does not authenticate the caller or verify
@@ -45,8 +48,32 @@ The command group is available for discovery:
 dendroflow config workbook --help
 ```
 
-G5.b-G5.e add workbook export, offline validation, and YAML conversion under
-this group.
+G5.c-G5.e add offline validation and YAML conversion under this group.
+
+## Populated workbook export CLI (G5.b)
+
+The export command uses the environment label and existing METADATA/RAW
+PostgreSQL settings described above. Values from the process environment take
+precedence over the project `.env` file; the label defaults to `local` when
+unset. Export all configuration resources or select one or more sites:
+
+```bash
+dendroflow config workbook export ~/Downloads/control.xlsx --all
+dendroflow config workbook export ~/Downloads/sites.xlsx --site-id 2 --site-id 3
+```
+
+Exactly one scope form is required. Site IDs must be positive integers;
+repeated IDs are deduplicated and the selected IDs are normalized for the
+workbook metadata. Site scope includes the required configuration closure
+according to the export rules below. The command reports the output path,
+captured target environment, scope, selected sites, and per-sheet row counts.
+
+The output must have an `.xlsx` suffix, its parent directory must already
+exist, and the destination must not already exist. Export never creates parent
+directories or overwrites a workbook. It reads configuration from the
+configured databases and does not write to them. The workbook carries the
+captured environment label as provenance; this label does not authenticate or
+verify the server identity.
 
 ## Sheets and headers
 
@@ -278,10 +305,10 @@ path = write_workbook_template(
 )
 ```
 
-The explicit environment label identifies the intended database pair. G2.a does
-not look it up or verify a connection; automatic environment configuration is
-still pending. Labels must contain 1-128 characters after trimming and no
-embedded control characters. Do not supply credentials or connection strings.
+The environment label identifies the intended database pair. G2.a does not
+look it up or verify a connection; G5 binds the label to the configured target
+settings. Labels must contain 1-128 characters after trimming and no embedded
+control characters. Do not supply credentials or connection strings.
 
 The result contains the guide, workbook information, and all resource headers.
 It has a new workbook UUID, `scope=template`, an empty `site_ids` array, and no
@@ -464,7 +491,8 @@ path = write_workbook_export(
 print(path)
 ```
 
-Use the non-secret environment label agreed for your database pair. The output
+Use the non-secret environment label agreed for your database pair, or leave it
+unset to use `local`. The output
 directory must exist and the filename must be new. Preparation can reject legacy
 records that the workbook cannot represent; resolve those diagnostics explicitly
 instead of silently changing database values just to make an export succeed.

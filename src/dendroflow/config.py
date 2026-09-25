@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 
+DEFAULT_TARGET_ENVIRONMENT = "local"
+
 
 def load_env(path: Path) -> dict[str, str]:
     """Load simple KEY=VALUE pairs from a .env file."""
@@ -113,9 +115,14 @@ def _validate_environment_label(value: str) -> str:
 
 
 def get_target_environment() -> str:
-    """Return the required, non-secret database-pair label."""
+    """Return the non-secret database-pair label, defaulting to local."""
     process_values, file_values = _configured_values()
-    value = _read_value(process_values, file_values, "DENDROFLOW_ENVIRONMENT")
+    value = _read_value(
+        process_values,
+        file_values,
+        "DENDROFLOW_ENVIRONMENT",
+        DEFAULT_TARGET_ENVIRONMENT,
+    )
     return _validate_environment_label(value)
 
 
@@ -123,7 +130,12 @@ def get_database_target() -> DatabaseTarget:
     """Capture the environment label and PostgreSQL settings once."""
     process_values, file_values = _configured_values()
     environment = _validate_environment_label(
-        _read_value(process_values, file_values, "DENDROFLOW_ENVIRONMENT")
+        _read_value(
+            process_values,
+            file_values,
+            "DENDROFLOW_ENVIRONMENT",
+            DEFAULT_TARGET_ENVIRONMENT,
+        )
     )
     parameters = {
         "host": _read_value(process_values, file_values, "POSTGRES_HOST", "localhost"),

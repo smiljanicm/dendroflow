@@ -52,6 +52,16 @@ def test_environment_label_can_be_read_without_database_credentials(monkeypatch)
     assert config.get_target_environment() == "local-dev"
 
 
+def test_environment_label_defaults_to_local(monkeypatch):
+    monkeypatch.setattr(config, "load_env", lambda _path: {})
+    monkeypatch.delenv("DENDROFLOW_ENVIRONMENT", raising=False)
+    monkeypatch.setenv("POSTGRES_USER", "test-user")
+    monkeypatch.setenv("POSTGRES_PASSWORD", "test-password")
+
+    assert config.get_target_environment() == "local"
+    assert config.get_database_target().environment == "local"
+
+
 def test_database_connections_share_the_active_target(monkeypatch):
     target = config.DatabaseTarget(
         environment="test-target",
