@@ -464,6 +464,115 @@ def test_workbook_supported_updates_and_new_related_rows(cli_case, monkeypatch, 
     assert len(metadata_state(case)["deployments"]) == len(before[0]["deployments"]) + 1
 
 
+def test_workbook_adds_interface_to_existing_file(cli_case, monkeypatch, capsys):
+    case = cli_case
+    monkeypatch.setenv("DENDROFLOW_ENVIRONMENT", "local")
+    write_config(case, full_config(case))
+    seeded = run_cli("config", "apply", case.path, "--yes")
+    assert_success(seeded)
+
+    site_id = metadata_state(case)["sites"][0]
+    metadata_before, raw_before = metadata_state(case), raw_state(case)
+    assert len(raw_before[0]) == len(raw_before[1]) == 1
+    original_file_id = raw_before[0][0][0]
+
+    workbook_path = case.path.with_suffix(".xlsx")
+    yaml_path = case.path.with_name("workbook-interface.yaml")
+    assert main([
+        "config", "workbook", "export", "--site-id", str(site_id),
+        str(workbook_path),
+    ]) == 0
+    capsys.readouterr()
+
+    workbook = load_workbook(workbook_path)
+    try:
+        variables = workbook["variables"]
+        variable_values = {
+            "variable_id": None,
+            "ref": "new_variable",
+            "row_role": "edit",
+            "variable": case.codes[1],
+            "derived": False,
+            "description": None,
+        }
+        variables.append([variable_values[cell.value] for cell in variables[1]])
+
+        deployments = workbook["deployments"]
+        deployment_columns = {cell.value: cell.column for cell in deployments[1]}
+        deployment_values = {
+            "deployment_id": None,
+            "ref": "new_deployment",
+            "row_role": "edit",
+            "sensor": deployments.cell(2, deployment_columns["sensor"]).value,
+            "location": deployments.cell(2, deployment_columns["location"]).value,
+            "variable": "new_variable",
+            "valid_from": "2027-01-01T00:00:00Z",
+            "valid_to": None,
+        }
+        deployments.append([
+            deployment_values[cell.value] for cell in deployments[1]
+        ])
+
+        interfaces = workbook["interfaces"]
+        interface_columns = {cell.value: cell.column for cell in interfaces[1]}
+        interface_values = {
+            "interface_id": None,
+            "ref": "new_interface",
+            "row_role": "edit",
+            "file": interfaces.cell(2, interface_columns["file"]).value,
+            "deployment": "new_deployment",
+            "timestamp_column": "TIMESTAMP",
+            "values_column": "value_new",
+            "unit": "cm",
+        }
+        interfaces.append([
+            interface_values[cell.value] for cell in interfaces[1]
+        ])
+        workbook.save(workbook_path)
+    finally:
+        workbook.close()
+
+    assert main(["config", "workbook", "validate", str(workbook_path)]) == 0
+    capsys.readouterr()
+    converted = main([
+        "config", "workbook", "convert", str(workbook_path), str(yaml_path),
+    ])
+    converted_output = capsys.readouterr()
+    assert converted == 0, converted_output.out + converted_output.err
+
+    planned = main(["config", "plan", str(yaml_path)])
+    plan_output = capsys.readouterr().out
+    assert planned == 0
+    assert "CREATE=2" in plan_output
+    assert "UPDATE=0" in plan_output
+
+    applied = main(["config", "apply", str(yaml_path), "--yes"])
+    applied_output = capsys.readouterr()
+    assert applied == 0, applied_output.out + applied_output.err
+    assert "METADATA: COMMITTED" in applied_output.out
+    assert "RAW: COMMITTED" in applied_output.out
+
+    metadata_after = metadata_state(case)
+    raw_after = raw_state(case)
+    assert len(metadata_after["variables"]) == len(metadata_before["variables"]) + 1
+    assert len(metadata_after["deployments"]) == len(metadata_before["deployments"]) + 1
+    assert raw_after[0] == raw_before[0]
+    assert len(raw_after[1]) == len(raw_before[1]) + 1
+    with connect("dendroflow_metadata") as connection:
+        new_deployment_id = connection.execute(
+            """
+            SELECT d.deployment_id
+            FROM deployments AS d
+            JOIN variables AS v USING (variable_id)
+            WHERE v.variable = %s
+            """,
+            (case.codes[1],),
+        ).fetchone()[0]
+    added_interfaces = [row for row in raw_after[1] if row not in raw_before[1]]
+    assert len(added_interfaces) == 1
+    assert added_interfaces[0][1:] == (original_file_id, new_deployment_id)
+
+
 def test_identity_confirmation_preserves_existing_id(cli_case, capsys):
     case = cli_case
     database_id = seed_site(case)

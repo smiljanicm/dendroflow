@@ -351,6 +351,15 @@ with:
 DENDROFLOW_INTEGRATION=1 pytest -q tests/integration/test_configuration_cli.py::test_workbook_supported_updates_and_new_related_rows
 ```
 
+G6.c adds an interface for a new deployment to an existing file through a
+site-scoped workbook. The CONFIG plan must create the new variable and
+deployment, reuse the existing file, and create one RAW interface while
+preserving the file's database ID. Run it with:
+
+```bash
+DENDROFLOW_INTEGRATION=1 pytest -q tests/integration/test_configuration_cli.py::test_workbook_adds_interface_to_existing_file
+```
+
 Run the G1 contract tests with:
 
 ```bash
