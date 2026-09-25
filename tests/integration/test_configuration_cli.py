@@ -375,7 +375,7 @@ def test_workbook_supported_updates_and_new_related_rows(cli_case, monkeypatch, 
         )
         sites.cell(site_row, site_columns["site_code"], case.codes[2])
         sites.cell(site_row, site_columns["name"], "Revised site name")
-        sites.cell(site_row, site_columns["description"], None)
+        sites.cell(site_row, site_columns["description"]).value = None
 
         variables = workbook["variables"]
         variable_values = {
