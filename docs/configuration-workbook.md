@@ -2,6 +2,10 @@
 
 ## Status
 
+The CONFIG MVP and Phase G workbook workflow are complete. The acceptance
+results recorded below cover the local workflow and automated integration
+suite. RAW UPDATE and broader mutation support are deferred beyond this MVP.
+
 G1 defines workbook format version 1, its sheet/column schema, and header checks.
 G2.a adds an empty XLSX template writer using openpyxl. G2.b reads stored
 configuration into pandas DataFrames. G2.c selects the export scope and prepares
@@ -15,8 +19,8 @@ and blocked rows. G4.c builds public lookups from current identities and checks
 their uniqueness in the full source snapshot. G4.d assembles a validated CONFIG
 model. G4.e serializes YAML and checks its round trip. G4.f resolves and verifies
 the generated plan. G5.a adds shared environment handling and the workbook CLI
-group. G5.b adds populated XLSX export; offline validation and YAML conversion
-follow in G5.c-G5.e.
+group. G5.b-G5.e implement populated XLSX export, offline validation, YAML
+conversion, and CLI hardening.
 G6.a-G6.d add opt-in PostgreSQL acceptance coverage for unchanged exports,
 supported edits and additions, RAW interface creation, and blocked unsupported
 edits. G6.e documents the final G-phase verification gate.
@@ -51,7 +55,7 @@ The command group is available for discovery:
 dendroflow config workbook --help
 ```
 
-G5.c-G5.e add offline validation and YAML conversion under this group.
+Offline validation and YAML conversion are available under this group.
 
 ## Populated workbook export CLI (G5.b)
 
@@ -154,7 +158,7 @@ by these data columns. The exporter uses the order below; the importer uses name
 The machine-readable schema is in
 `src/dendroflow/configuration/workbook/schema.py`. It describes cell kinds,
 nullability, relationship target sheets, and supported YAML update fields.
-It is independent of pandas and the eventual XLSX library.
+It is independent of pandas and openpyxl.
 
 ## Workbook information
 
@@ -173,8 +177,8 @@ Do not store passwords or connection strings in a workbook. The environment
 identifier must match the configured import target before IDs are interpreted.
 It is provenance, not an authentication or permission mechanism. G2 Python
 writers require the caller to supply this label; they do not verify it against
-connection settings. G5 must bind the label to the configured database pair and
-use it consistently for export and import. It must not be inferred solely from
+connection settings. G5 captures the label with the configured database pair and
+uses it consistently for export and import. It must not be inferred solely from
 database names, which can be identical on different servers.
 
 ## Export scope and shared resources
@@ -262,7 +266,7 @@ The workbook describes desired field values, not a sparse update form.
   precision through Excel's 15-significant-digit numeric limit. Keep text
   formatting and use a dot decimal separator; scientific notation is valid.
   These remain logical NUMBER fields in the schema and Python numbers in the
-  prepared frames. G3 must parse the text back to finite numbers before
+  prepared frames. G3 parses the text back to finite numbers before
   comparison. Boolean cells remain native Excel booleans.
 - Validity timestamps are ISO 8601 text with an explicit offset, for example
   `2026-01-01T00:00:00Z`. Export UTC; compare instants after normalization.
@@ -277,7 +281,7 @@ The workbook describes desired field values, not a sparse update form.
 - Ignore completely blank resource rows; reject partially populated invalid
   rows. Preserve original Excel row numbers for diagnostics before sorting.
 
-G3 will implement these cell and relationship checks. G1 validates headers only.
+G3 implements these cell and relationship checks. G1 validates headers only.
 
 ## Supported changes and YAML boundary
 
@@ -296,9 +300,9 @@ New rows still use normal CONFIG validation and compatible-resource resolution.
 Unchanged records require no writes. Deletions and broadening UPDATE support
 remain outside Phase G.
 
-Workbook IDs are not currently valid YAML lookup fields. G4 must use verified
-current selectors for those IDs, retain existing-resource reference bindings,
-and prove that each generated lookup resolves the intended record. If the public
+Workbook IDs are not currently valid YAML lookup fields. G4 uses verified
+current selectors for those IDs, retains existing-resource reference bindings,
+and verifies that each generated lookup resolves the intended record. If the public
 lookup contract cannot express a record unambiguously, stop with a diagnostic.
 Any required selector extension must be a separately reviewed change, rather
 than bypassing CONFIG resolution or persistence. Renames must select existing
@@ -311,17 +315,47 @@ supported UPDATE fields after planning, not to the entire editing session.
 Without a baseline, independent database edits made during Excel editing can
 appear as changes back to workbook values. Explicit review remains required.
 
-## Acceptance and remaining implementation
+## Acceptance and CONFIG MVP closeout
 
-G2 is implemented through Python APIs: template generation, database reading,
-scope/value preparation, and populated writing with export metadata. Desktop
-editing and the complete import/compare round trip still need acceptance checks.
-G3.a reads structure and metadata; G3.b parses resource cells; G3.c validates
-identities, relationships and roles within the workbook. Verification against
-current database state belongs to G4.
-G4 compares against databases and writes YAML; G5 adds CLI commands; G6 verifies
-the complete round trip. Unsupported legacy database values need clear export
-or conversion diagnostics, not silent normalization that changes their meaning.
+G1-G6 implement and verify the workbook contract, export, validation, database
+comparison, YAML generation, and CLI workflow. Unsupported legacy database
+values produce export or conversion diagnostics rather than silent changes.
+
+### Acceptance record (2026-09-25)
+
+The maintainer reported the following local acceptance results after commit
+`93e6250`, using target environment `local` and an `--all` workbook containing
+15 resource rows across all eleven resource sheets:
+
+- The unchanged workbook validated and converted with 15 unchanged rows,
+  no new, updated, or blocked rows; planning reported zero operations.
+- Editing one site's description produced exactly one site UPDATE and no
+  CREATE operations. The plan contained only the intended description change.
+- Applying the update returned SUCCESS, with METADATA COMMITTED and RAW
+  NOT_REQUIRED. A fresh workbook was exported after applying the change.
+- Planning the same YAML again reported zero operations.
+
+The terminal transcript records these CLI results. The spreadsheet application
+and version were not recorded; this is not a compatibility claim for all
+Excel or LibreOffice versions.
+
+Automated checks reported by the maintainer:
+
+| Check | Result |
+| --- | --- |
+| `ruff check src tests` | Passed |
+| `pytest -q` | 1767 passed, 27 skipped |
+| `DENDROFLOW_INTEGRATION=1 pytest -q tests/integration/test_configuration_cli.py` | 10 passed |
+| `DENDROFLOW_INTEGRATION=1 pytest -q` | 1794 passed, no skips |
+
+These results close the CONFIG MVP acceptance gate. They do not change the
+supported mutation contract or the transaction and concurrency limitations.
+RAW UPDATE, deletion support, broader existing-record updates, and an
+export-time baseline for detecting database changes during workbook editing
+remain deferred.
+See [persistence scope and deferred work](configuration-persistence.md#phase-e-scope-and-deferred-work).
+
+### Automated workbook acceptance coverage
 
 The central acceptance case uses CONFIG-compatible records:
 export, import unchanged, plan, and apply with zero database writes.
@@ -420,7 +454,7 @@ The result contains the guide, workbook information, and all resource headers.
 It has a new workbook UUID, `scope=template`, an empty `site_ids` array, and no
 export timestamp or resource records. Text columns have Excel text formatting,
 headers remain visible while scrolling, and role/boolean/reader-type dropdowns
-help users enter values. Dropdowns do not replace future Python validation.
+help users enter values. Dropdowns do not replace Python validation.
 Changing formatting or pasting cells can override Excel's text formatting;
 check leading zeros and use value-only paste when entering identifiers.
 Logical NUMBER columns also use text formatting to preserve numeric precision.
@@ -439,8 +473,9 @@ pytest -q tests/test_configuration_workbook_writer.py
 ```
 
 Tests reopen saved XLSX files to check structure, metadata, formatting, dropdown
-ranges, literal text handling, and file-creation error behaviour. Desktop Excel
-interaction and workbook layout should also be checked locally.
+ranges, literal text handling, and file-creation error behaviour. When changing
+workbook formatting or the spreadsheet application/version,
+repeat the local open/save and supported-edit acceptance checks above.
 
 ## Configuration database reading (G2.b)
 
@@ -1016,9 +1051,9 @@ planning. G4.c-G4.f must verify selectors and generated operations before YAML
 is considered ready. Successful comparison does not authorize apply.
 
 An unchanged export should contain only `unchanged` rows and no field changes.
-The later end-to-end assertion of zero CREATE/UPDATE operations remains for
-G4.f. Database edits since export can appear as requested changes back to the
-workbook values: there is no export-time baseline or editing-history detection.
+G4.f verifies zero CREATE/UPDATE operations; G6.a also checks the live
+export-to-apply round trip for zero writes. Database edits since export can
+appear as requested changes back to the workbook values: there is no export-time baseline or editing-history detection.
 
 ```bash
 pytest -q tests/test_configuration_workbook_comparison.py
@@ -1107,16 +1142,16 @@ is returned. Errors point to the existing workbook row's ID cell. A failed
 omitted dependency is reported at its dependent workbook row, naming the
 current dependency ID. G4.b blocking errors remain `WorkbookComparisonError`.
 
-File selectors require special handling in the next step. G4.c returns a
-`FileLookupConfig` as identity evidence, but the existing CONFIG resolver does
-not execute `references.files`. G4.d must put new interfaces for an existing
-file into a compatible file declaration using current file settings. It must
-verify reuse of the intended file, rather than treating a returned lookup model
-as proof that an executable file-reference workflow exists.
+File selectors require special handling during configuration generation. G4.c
+returns a `FileLookupConfig` as identity evidence, but the existing CONFIG resolver does
+not execute `references.files`. G4.d puts new interfaces for an existing
+file into a compatible file declaration using current file settings. G4.f
+verifies reuse of the intended file; a returned lookup model alone is not
+proof that an executable file-reference workflow exists.
 
 This step verifies selector uniqueness in the supplied snapshot. It does not
 query PostgreSQL again, generate a complete CONFIG document, or verify a future
-apply. G4.f must resolve generated CONFIG against live databases and check
+apply. G4.f resolves generated CONFIG against live databases and checks
 target IDs and operations again. The source reader's separate database
 transactions and absence of an export-time baseline remain unchanged.
 
@@ -1174,8 +1209,9 @@ Current dependency rows, including helper aliases for omitted records, remain
 lookups in `references`; they do not become edits. The generated model is
 validated for CONFIG structure and semantics, but compatible-resource reuse,
 live selector targets, and final CREATE/REUSE/UPDATE operations are not yet
-verified here. G4.e adds validated YAML serialization; G4.f must resolve the
-serialized configuration and compare targets and operations against the intended workbook changes. A new declaration is only a
+verified by this step. G4.e adds validated YAML serialization; G4.f resolves the
+serialized configuration and compares targets and operations against the
+intended workbook changes. A new declaration is only a
 candidate: the resolver may choose REUSE. Missing workbook rows never generate
 deletions.
 
@@ -1259,8 +1295,8 @@ Resolver errors, missing or unexpected operations, wrong targets, and
 unexpected changes raise `WorkbookPlanVerificationError`; its `plan` attribute
 retains the blocked plan for diagnosis. The verifier performs no preparation,
 confirmation, or database writes. The configured METADATA and RAW connections
-must point to the target pair represented by `target_environment`; G5 will bind
-that label to connection configuration.
+must point to the target pair represented by `target_environment`; G5 captures
+that label together with connection configuration.
 
 ```bash
 pytest -q tests/test_configuration_workbook_verification.py
@@ -1269,5 +1305,5 @@ pytest -q tests/test_configuration_workbook*.py
 
 Unit tests use controlled resolved plans to verify unchanged workbooks, scalar
 and relationship updates, new declarations, existing-file reuse, wrong targets,
-and resolver errors. Live database acceptance and export-to-apply checks remain
-part of the later end-to-end verification.
+and resolver errors. G6 provides live database acceptance and export-to-apply
+checks, as described in the acceptance section above.

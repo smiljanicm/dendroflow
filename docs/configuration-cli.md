@@ -128,8 +128,8 @@ Preview and apply it using the same commands. An identity change, such as changi
 
 METADATA supports CREATE, REUSE, and the documented UPDATE operations.
 RAW files and interfaces currently support CREATE and REUSE only.
-RAW updates, including changing a registered filepath, remain on the future
-work list; their inclusion in MVP is undecided.
+RAW updates, including changing a registered filepath while preserving its
+history, are deferred beyond the CONFIG MVP.
 
 File registration does not require the source file to exist and does not read
 its measurements. Ingestion is a separate workflow. Existing sample
@@ -209,3 +209,13 @@ by unit tests.
 Integration tests skip by default when `DENDROFLOW_INTEGRATION` is not `1`.
 JSON output, saved executable plans, and an interactive configuration wizard
 are optional work after MVP.
+
+## CONFIG MVP status
+
+The YAML and workbook CONFIG workflows completed acceptance on 2026-09-25.
+The full suite with PostgreSQL integration enabled reported 1794 passing tests.
+The local workbook check verified an unchanged plan, a single description
+update, successful apply, and a no-op repeat plan. See the
+[acceptance record](configuration-workbook.md#acceptance-record-2026-09-25)
+for the checks and their scope. RAW UPDATE remains deferred beyond this MVP;
+file registration and measurement ingestion remain separate operations.

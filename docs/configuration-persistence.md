@@ -667,14 +667,17 @@ plans:
 - Combined METADATA-before-RAW apply with explicit transaction outcomes.
 - Unit tests and opt-in PostgreSQL integration tests.
 
-This completes the implementation scope of Phase E. It does not mean
-that the remaining CONFIG phases or the complete user-facing workflow
-are finished.
+Phase E persistence is complete. The subsequent YAML CLI and workbook
+workflow have also completed CONFIG MVP acceptance; see the
+[acceptance record](configuration-workbook.md#acceptance-record-2026-09-25).
+The transaction and recovery limitations documented above remain unchanged.
 
 ### Future RAW UPDATE work
 
-RAW UPDATE remains outside the completed Phase E scope. Whether it
-belongs in the MVP will be decided separately.
+RAW UPDATE is deferred beyond the CONFIG MVP. Existing RAW files and
+interfaces continue to support CREATE and REUSE only; conflicting settings
+are rejected. Future UPDATE support requires a separate design and acceptance
+phase.
 
 The future-work list includes:
 
