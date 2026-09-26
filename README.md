@@ -21,6 +21,7 @@ The initial development focuses on:
 - [Data architecture](docs/data-architecture.md) — overall METADATA, RAW, and CLEAN data model
 - [RAW ingestion](docs/raw-ingestion.md) — file versioning, provenance, batching, retries, and resume behavior
 - [Database migrations](docs/database-migrations.md) — migration structure and execution
+- [Ingestion CLI](docs/ingestion-cli.md) — run registered files and interpret text or JSON results
 - [Configuration persistence](docs/configuration-persistence.md) — METADATA and RAW persistence, public apply functions, transaction outcomes, and recovery boundaries
 - [Configuration CLI](docs/configuration-cli.md) — validation, planning, confirmation, apply outcomes, and recovery
 - [Configuration workbook workflow](docs/configuration-workbook.md) — Excel export, validation, conversion to YAML, supported changes, and review before apply
