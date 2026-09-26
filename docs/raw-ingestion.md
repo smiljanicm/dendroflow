@@ -994,9 +994,35 @@ task must preserve snapshots referenced by any running or resumable run.
 Unit tests cover content hashing, content-addressed reuse, incomplete trailing
 lines, empty snapshots, and source changes during capture. The existing
 PostgreSQL interruption/resume test uses a temporary staging directory. These
-tests do not yet establish append overlap handling, historical conflict
-detection, or resuming an older snapshot after the live source has grown; those
-remain later growing-file work.
+tests do not yet establish truncation protection, resuming an older snapshot
+after the live source has grown, or concurrent-worker exclusion; those remain
+later growing-file work.
+
+## Append overlap and conflict handling (GF3)
+
+Every incoming observation is checked against RAW using its full identity:
+`(location_id, variable_id, timestamp)`. Appended snapshots therefore compare
+their full contents with stored observations, including late-arriving older
+timestamps. Equal overlaps from the same interface are left untouched, so
+their original run and source-line provenance remain intact. Only identities
+not already in RAW are inserted.
+
+Values are compared after normal timestamp and numeric conversion, using exact
+equality. PostgreSQL `NaN` values compare equal to one another. Within a reader
+batch, repeated equal identities from the same interface keep the first source
+line and are written once. A changed value or interface for an existing
+identity, or conflicting repeated identities in one batch, raises an
+`ObservationConflictError`. The conflicting batch is rolled back; stored rows
+are not replaced. Deterministic observation conflicts are not retried as
+transient failures.
+
+The insert and batch completion checkpoint share one transaction. Earlier
+completed batches remain committed if a later batch conflicts. Corrections and
+deletions of existing RAW observations remain outside this workflow.
+
+Unit tests cover in-batch repeated identities and numeric equality. PostgreSQL
+integration tests cover appending rows, replaying the resulting snapshot, and
+preserving existing RAW values when historical content conflicts.
 
 Run the unit coverage with:
 

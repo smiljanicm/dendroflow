@@ -60,45 +60,42 @@ def test_insert_raw_observations():
     )
 
     class FakeCursor:
+        def __init__(self):
+            self.rows = []
+            self.result = None
+
         def __enter__(self):
             return self
 
         def __exit__(self, exc_type, exc_value, traceback):
             pass
 
-        def executemany(self, query, rows):
-            self.rows = rows
+        def execute(self, query, parameters):
+            self.result = None
+            if query.lstrip().startswith("INSERT INTO raw_observations"):
+                self.rows.append(parameters)
+                self.result = (len(self.rows),)
 
-            assert rows == [
-                (
-                    3,
-                    1,
-                    timestamp_1,
-                    10.5,
-                    4,
-                    7,
-                    5,
-                ),
-                (
-                    3,
-                    1,
-                    timestamp_2,
-                    11.2,
-                    4,
-                    7,
-                    6,
-                ),
-            ]
+        def fetchone(self):
+            return self.result
+
+    cursor = FakeCursor()
 
     class FakeConnection:
         def cursor(self):
-            return FakeCursor()
+            return cursor
 
     insert_raw_observations(
         FakeConnection(),
         ingestion_run_id=7,
         observations=observations,
     )
+
+    assert cursor.rows == [
+        (3, 1, timestamp_1, 10.5, 4, 7, 5),
+        (3, 1, timestamp_2, 11.2, 4, 7, 6),
+    ]
+
 
 def test_ingest_file(monkeypatch, tmp_path):
     source_file = SourceFile(

@@ -5,6 +5,7 @@ from .batches import (
     start_ingestion_batch,
     validate_ingestion_batch_checkpoint,
 )
+from .conflicts import ObservationConflictError
 from .models import IngestionRun
 from .normalization import normalize_batch
 from .runs import (
@@ -192,7 +193,10 @@ def ingest_file(
                         f"{type(error).__name__}: {error}",
                     )
 
-                    if ingestion_batch.attempt_count >= max_attempts:
+                    if (
+                        isinstance(error, ObservationConflictError)
+                        or ingestion_batch.attempt_count >= max_attempts
+                    ):
                         raise
 
         return finalize_ingestion_run(

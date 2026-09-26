@@ -20,6 +20,7 @@ from dendroflow.ingestion import (
     start_ingestion_batch,
     write_ingestion_batch,
 )
+from dendroflow.ingestion.conflicts import ObservationConflictError
 
 pytestmark = [
     pytest.mark.integration,
@@ -648,3 +649,143 @@ def test_raw_ingestion_resumes_interrupted_run(
     assert observation_count == 12
     assert interface_count == 2
     assert target_count == 2
+
+
+def test_raw_ingestion_appended_snapshot_preserves_overlap_provenance(
+    raw_ingestion_fixture,
+    monkeypatch,
+):
+    file_id = raw_ingestion_fixture["file_id"]
+    path = raw_ingestion_fixture["path"]
+    monkeypatch.setenv(
+        "DENDROFLOW_SNAPSHOT_DIR",
+        str(path.parent / "snapshots"),
+    )
+
+    first_run = ingest_file(file_id)
+    original = path.read_text()
+    path.write_text(
+        original
+        + "2026-01-02 01:30:00,10.6,4.6\n"
+        + "2026-01-02 01:45:00,10.7,4.7\n"
+    )
+
+    appended_run = ingest_file(file_id)
+
+    assert appended_run.status == "completed"
+    assert appended_run.ingestion_run_id != first_run.ingestion_run_id
+
+    with connect("dendroflow_raw") as connection:
+        rows = connection.execute(
+            """
+            SELECT source_row_number, ingestion_run_id
+            FROM raw_observations
+            WHERE ingestion_run_id IN (%s, %s)
+            ORDER BY source_row_number, ingestion_run_id
+            """,
+            (first_run.ingestion_run_id, appended_run.ingestion_run_id),
+        ).fetchall()
+        count = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM raw_observations
+            WHERE interface_id IN (
+                SELECT interface_id
+                FROM sensor_file_interfaces
+                WHERE file_id = %s
+            )
+            """,
+            (file_id,),
+        ).fetchone()[0]
+
+    assert count == 16
+    assert [row for row in rows if row[0] <= 7] == [
+        (line, first_run.ingestion_run_id)
+        for line in range(2, 8)
+        for _ in range(2)
+    ]
+    assert [row for row in rows if row[0] >= 8] == [
+        (line, appended_run.ingestion_run_id)
+        for line in range(8, 10)
+        for _ in range(2)
+    ]
+
+    repeated_run = ingest_file(file_id)
+    assert repeated_run.ingestion_run_id == appended_run.ingestion_run_id
+
+    with connect("dendroflow_raw") as connection:
+        assert connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM raw_observations
+            WHERE interface_id IN (
+                SELECT interface_id
+                FROM sensor_file_interfaces
+                WHERE file_id = %s
+            )
+            """,
+            (file_id,),
+        ).fetchone()[0] == 16
+
+
+def test_raw_ingestion_historical_value_conflict_preserves_raw_rows(
+    raw_ingestion_fixture,
+    monkeypatch,
+):
+    file_id = raw_ingestion_fixture["file_id"]
+    path = raw_ingestion_fixture["path"]
+    monkeypatch.setenv(
+        "DENDROFLOW_SNAPSHOT_DIR",
+        str(path.parent / "snapshots"),
+    )
+    ingest_file(file_id)
+
+    lines = path.read_text().splitlines()
+    lines[1] = "2026-01-02 00:00:00,999.0,4.0"
+    path.write_text("\n".join(lines) + "\n")
+
+    with pytest.raises(ObservationConflictError, match="value conflict"):
+        ingest_file(file_id)
+
+    with connect("dendroflow_raw") as connection:
+        count = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM raw_observations
+            WHERE interface_id IN (
+                SELECT interface_id
+                FROM sensor_file_interfaces
+                WHERE file_id = %s
+            )
+            """,
+            (file_id,),
+        ).fetchone()[0]
+        stored_value = connection.execute(
+            """
+            SELECT value
+            FROM raw_observations
+            WHERE source_row_number = 2
+              AND interface_id IN (
+                  SELECT interface_id
+                  FROM sensor_file_interfaces
+                  WHERE file_id = %s
+              )
+            ORDER BY interface_id
+            LIMIT 1
+            """,
+            (file_id,),
+        ).fetchone()[0]
+        failed_batches = connection.execute(
+            """
+            SELECT status, attempt_count
+            FROM ingestion_batches AS batches
+            JOIN file_versions USING (file_version_id)
+            WHERE file_id = %s
+              AND status = 'failed'
+            """,
+            (file_id,),
+        ).fetchall()
+
+    assert count == 12
+    assert stored_value == 10.0
+    assert failed_batches == [("failed", 1)]
