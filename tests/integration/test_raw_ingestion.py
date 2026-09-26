@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
@@ -757,6 +757,101 @@ def test_raw_ingestion_appended_snapshot_preserves_overlap_provenance(
             """,
             (file_id,),
         ).fetchone()[0] == 16
+
+
+def test_raw_ingestion_accepts_100_rows_then_20_row_append(
+    raw_ingestion_fixture,
+    monkeypatch,
+):
+    file_id = raw_ingestion_fixture["file_id"]
+    path = raw_ingestion_fixture["path"]
+    monkeypatch.setenv(
+        "DENDROFLOW_SNAPSHOT_DIR",
+        str(path.parent / "snapshots"),
+    )
+
+    start = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    initial_rows = ["TIMESTAMP,value_a,value_b"]
+    for index in range(100):
+        timestamp = start + timedelta(minutes=15 * index)
+        initial_rows.append(
+            f"{timestamp:%Y-%m-%d %H:%M:%S},"
+            f"{10 + index / 10:.1f},{4 + index / 10:.1f}"
+        )
+    path.write_text("\n".join(initial_rows) + "\n")
+
+    first_run = ingest_file(file_id)
+
+    appended_rows = []
+    for index in range(100, 120):
+        timestamp = start + timedelta(minutes=15 * index)
+        appended_rows.append(
+            f"{timestamp:%Y-%m-%d %H:%M:%S},"
+            f"{10 + index / 10:.1f},{4 + index / 10:.1f}"
+        )
+    with path.open("a") as source:
+        source.write("\n".join(appended_rows) + "\n")
+
+    appended_run = ingest_file(file_id)
+    assert appended_run.status == "completed"
+    assert appended_run.ingestion_run_id != first_run.ingestion_run_id
+
+    with connect("dendroflow_raw") as connection:
+        interface_counts = connection.execute(
+            """
+            SELECT interface_id, COUNT(*), COUNT(DISTINCT timestamp)
+            FROM raw_observations
+            WHERE interface_id IN (
+                SELECT interface_id
+                FROM sensor_file_interfaces
+                WHERE file_id = %s
+            )
+            GROUP BY interface_id
+            ORDER BY interface_id
+            """,
+            (file_id,),
+        ).fetchall()
+        provenance = connection.execute(
+            """
+            SELECT source_row_number, ingestion_run_id
+            FROM raw_observations
+            WHERE interface_id IN (
+                SELECT interface_id
+                FROM sensor_file_interfaces
+                WHERE file_id = %s
+            )
+            ORDER BY source_row_number, ingestion_run_id
+            """,
+            (file_id,),
+        ).fetchall()
+
+    assert len(interface_counts) == 2
+    assert [row[1:] for row in interface_counts] == [(120, 120), (120, 120)]
+    assert provenance == [
+        (line, first_run.ingestion_run_id)
+        for line in range(2, 102)
+        for _ in range(2)
+    ] + [
+        (line, appended_run.ingestion_run_id)
+        for line in range(102, 122)
+        for _ in range(2)
+    ]
+
+    repeated_run = ingest_file(file_id)
+    assert repeated_run.ingestion_run_id == appended_run.ingestion_run_id
+    with connect("dendroflow_raw") as connection:
+        assert connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM raw_observations
+            WHERE interface_id IN (
+                SELECT interface_id
+                FROM sensor_file_interfaces
+                WHERE file_id = %s
+            )
+            """,
+            (file_id,),
+        ).fetchone()[0] == 240
 
 
 def test_raw_ingestion_historical_value_conflict_preserves_raw_rows(

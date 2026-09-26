@@ -954,9 +954,9 @@ cover all of the following:
 8. Attempt concurrent ingestion for one registered file; the second worker
    must exit with a clear already-running result and perform no writes.
 
-These cases define scope for GF2-GF5. They do not claim that growing-file
-behaviour is implemented until those phases and the real-source acceptance
-check are complete.
+These cases define the growing-file acceptance contract. Automated integration
+coverage and a real-source check are both required before declaring this
+workflow ready for operational use.
 
 ---
 
@@ -1074,6 +1074,32 @@ pytest -q tests/test_ingestion_locks.py
 DENDROFLOW_INTEGRATION=1 pytest -q \
   tests/integration/test_raw_ingestion.py::test_raw_ingestion_rejects_concurrent_worker_without_writes
 ```
+
+## Growing-file acceptance (GF5)
+
+The PostgreSQL integration suite includes a full append acceptance case: it
+ingests 100 rows, appends 20 rows, then ingests again. It verifies 120 unique
+timestamps for each of two interfaces, preserves first-run provenance for the
+original rows, attributes the appended rows to the second run, and confirms a
+replay creates no additional observations.
+
+Run the automated acceptance case with:
+
+```bash
+DENDROFLOW_INTEGRATION=1 pytest -q \
+  tests/integration/test_raw_ingestion.py::test_raw_ingestion_accepts_100_rows_then_20_row_append
+```
+
+Before using growing-file ingestion operationally, perform one acceptance
+check with a registered source in the target environment. Let the source grow
+through its normal logger or export process; do not edit a live source to
+manufacture the append. Ingest one complete snapshot, allow new complete rows
+to arrive, and ingest again. Confirm that prior RAW values and provenance are
+unchanged, newly appended rows are present exactly once with the later run and
+correct physical source lines, and replaying the latest snapshot adds no rows.
+Keep the source identifier, snapshot hashes, run IDs, row counts, and outcome
+with the deployment notes. The real-source check is environment-specific and
+cannot be established by the synthetic automated fixture alone.
 
 ---
 
