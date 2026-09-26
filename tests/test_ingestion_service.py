@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -21,6 +22,10 @@ from dendroflow.tabular import TabularBatch
 
 @pytest.fixture(autouse=True)
 def no_running_or_completed_file_versions(monkeypatch):
+    monkeypatch.setattr(
+        "dendroflow.ingestion.service.file_ingestion_lock",
+        lambda file_id: nullcontext(),
+    )
     monkeypatch.setattr(
         "dendroflow.ingestion.service.get_resumable_file_version",
         lambda file_id, interface_ids: None,

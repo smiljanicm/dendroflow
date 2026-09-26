@@ -6,6 +6,7 @@ from .batches import (
     start_ingestion_batch,
     validate_ingestion_batch_checkpoint,
 )
+from .locks import FileIngestionInProgressError, file_ingestion_lock
 from .models import (
     Deployment,
     FileFingerprint,
@@ -52,6 +53,7 @@ from .writer import (
 __all__ = [
     "Deployment",
     "FileFingerprint",
+    "FileIngestionInProgressError",
     "FileVersion",
     "IngestionBatch",
     "IngestionRun",
@@ -65,6 +67,7 @@ __all__ = [
     "create_ingestion_run",
     "create_ingestion_run_with_targets",
     "fail_ingestion_batch",
+    "file_ingestion_lock",
     "finalize_ingestion_run",
     "fingerprint_file",
     "finish_ingestion_run",

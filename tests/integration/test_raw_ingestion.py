@@ -7,6 +7,7 @@ from psycopg.types.json import Jsonb
 
 from dendroflow.database import connect
 from dendroflow.ingestion import (
+    FileIngestionInProgressError,
     SourceFileRegressionError,
     create_ingestion_batch,
     create_ingestion_run_with_targets,
@@ -21,6 +22,7 @@ from dendroflow.ingestion import (
     write_ingestion_batch,
 )
 from dendroflow.ingestion.conflicts import ObservationConflictError
+from dendroflow.ingestion.locks import file_ingestion_lock
 from dendroflow.ingestion.snapshots import capture_source_snapshot
 
 pytestmark = [
@@ -856,3 +858,37 @@ def test_raw_ingestion_rejects_smaller_source_snapshot(
         ).fetchone()[0]
 
     assert count == 12
+
+
+def test_raw_ingestion_rejects_concurrent_worker_without_writes(
+    raw_ingestion_fixture,
+    monkeypatch,
+):
+    file_id = raw_ingestion_fixture["file_id"]
+    snapshot_root = raw_ingestion_fixture["path"].parent / "snapshots"
+    monkeypatch.setenv("DENDROFLOW_SNAPSHOT_DIR", str(snapshot_root))
+
+    with file_ingestion_lock(file_id), pytest.raises(
+        FileIngestionInProgressError,
+        match="already running",
+    ):
+        ingest_file(file_id)
+
+    with connect("dendroflow_raw") as connection:
+        version_count = connection.execute(
+            "SELECT COUNT(*) FROM file_versions WHERE file_id = %s",
+            (file_id,),
+        ).fetchone()[0]
+        run_target_count = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM ingestion_targets AS targets
+            JOIN file_versions USING (file_version_id)
+            WHERE file_id = %s
+            """,
+            (file_id,),
+        ).fetchone()[0]
+
+    assert version_count == 0
+    assert run_target_count == 0
+    assert not (snapshot_root / str(file_id)).exists()

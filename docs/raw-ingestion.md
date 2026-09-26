@@ -993,9 +993,7 @@ task must preserve snapshots referenced by any running or resumable run.
 
 Unit tests cover content hashing, content-addressed reuse, incomplete trailing
 lines, empty snapshots, and source changes during capture. The existing
-PostgreSQL interruption/resume test uses a temporary staging directory. These
-tests do not yet establish concurrent-worker exclusion; that remains later
-growing-file work.
+PostgreSQL interruption/resume tests use a temporary staging directory.
 
 ## Append overlap and conflict handling (GF3)
 
@@ -1052,6 +1050,29 @@ Run the opt-in PostgreSQL resume check with:
 
 ```bash
 DENDROFLOW_INTEGRATION=1 pytest -q tests/integration/test_raw_ingestion.py
+```
+
+## Concurrent worker exclusion (GF4b)
+
+`ingest_file()` obtains a PostgreSQL session-level advisory lock keyed by the
+registered `file_id` before reading source metadata or capturing a snapshot.
+Only one worker can ingest a given registered file at a time; workers for
+different files can proceed independently. A competing call raises
+`FileIngestionInProgressError` with a retry-after-the-active-worker message.
+It does not create a snapshot, file version, ingestion run, or RAW writes.
+
+The lock is held for the full ingestion, including resume and batch writes.
+PostgreSQL releases the lock when the owning connection closes, including
+after an exception or process termination. No schema migration is needed.
+
+Unit tests cover lock acquisition, release, and rejection. The opt-in
+PostgreSQL integration test verifies that a competing worker is rejected
+without creating ingestion state or a snapshot:
+
+```bash
+pytest -q tests/test_ingestion_locks.py
+DENDROFLOW_INTEGRATION=1 pytest -q \
+  tests/integration/test_raw_ingestion.py::test_raw_ingestion_rejects_concurrent_worker_without_writes
 ```
 
 ---

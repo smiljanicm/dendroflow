@@ -6,6 +6,7 @@ from .batches import (
     validate_ingestion_batch_checkpoint,
 )
 from .conflicts import ObservationConflictError
+from .locks import file_ingestion_lock
 from .models import FileFingerprint, IngestionRun
 from .normalization import normalize_batch
 from .runs import (
@@ -41,6 +42,17 @@ def ingest_file(
 
     if max_attempts < 1:
         raise ValueError("max_attempts must be at least 1")
+
+    with file_ingestion_lock(file_id):
+        return _ingest_file(file_id, max_attempts=max_attempts)
+
+
+def _ingest_file(
+    file_id: int,
+    *,
+    max_attempts: int,
+) -> IngestionRun:
+    """Run ingestion while the caller holds the file lock."""
 
     source_file = get_source_file(file_id)
     interfaces = get_source_interfaces(file_id)
