@@ -80,6 +80,51 @@ class IngestionRun:
 
 
 @dataclass(frozen=True)
+class ObservationWriteCounts:
+    """Counts produced by one successfully committed batch."""
+
+    inserted: int
+    unchanged: int
+    repeated_identity_rows: int
+
+
+@dataclass(frozen=True)
+class IngestionCounts:
+    """Counts for one ingestion invocation."""
+
+    source_rows_examined: int | None
+    observations_inserted: int | None
+    observations_unchanged: int | None
+    repeated_identity_rows: int | None
+    deferred_trailing_bytes: int | None
+
+
+@dataclass(frozen=True)
+class IngestionError:
+    """A stable error category with optional source context."""
+
+    category: str
+    message: str
+    batch_number: int | None = None
+    source_line: int | None = None
+
+
+@dataclass(frozen=True)
+class IngestionFileResult:
+    """Structured result for one file ingestion invocation."""
+
+    file_id: int
+    filepath: str | None
+    outcome: str
+    ingestion_run_id: int | None
+    file_version_id: int | None
+    snapshot_hash: str | None
+    resumed: bool | None
+    counts: IngestionCounts | None
+    error: IngestionError | None
+
+
+@dataclass(frozen=True)
 class IngestionBatch:
     """Represent one checkpointed ingestion batch."""
 
@@ -96,3 +141,10 @@ class IngestionBatch:
     finished_at: datetime | None
     error_message: str | None
 
+
+@dataclass(frozen=True)
+class IngestionBatchWriteResult:
+    """One committed batch and its observation counts."""
+
+    batch: IngestionBatch
+    counts: ObservationWriteCounts

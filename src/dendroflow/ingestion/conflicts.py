@@ -7,6 +7,15 @@ from .models import NormalizedObservation
 class ObservationConflictError(ValueError):
     """Raised when an observation would change established RAW data."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        source_line: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.source_line = source_line
+
 
 def observation_identity(
     observation: NormalizedObservation,
@@ -51,7 +60,8 @@ def deduplicate_observations(
             "Repeated observation identity has "
             f"{reason}: identity={identity}, "
             f"first_source_line={existing.source_row_number}, "
-            f"incoming_source_line={incoming.source_row_number}"
+            f"incoming_source_line={incoming.source_row_number}",
+            source_line=incoming.source_row_number,
         )
 
     return tuple(unique.values()), repeated

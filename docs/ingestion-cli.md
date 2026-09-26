@@ -114,9 +114,15 @@ database records.
 
 The stable error categories are `file_busy`, `source_changing`,
 `needs_configuration`, `source_regression`, `observation_conflict`,
-`database_error`, `retry_limit`, and `unexpected_error`. The human-readable
-message may include details for an operator; automation should branch on the
-category and outcome instead of parsing that message.
+`source_unavailable`, `source_snapshot_unavailable`, `database_error`,
+`retry_limit`, and `unexpected_error`. The human-readable message may include
+details for an operator; automation should branch on the category and outcome
+instead of parsing that message.
+
+Python callers that need the same structured outcome can use
+`dendroflow.ingestion.ingest_file_with_report(file_id)`. The existing
+`ingest_file(file_id)` API keeps returning `IngestionRun` and continues to raise
+ingestion errors.
 
 ## Text and JSON output
 

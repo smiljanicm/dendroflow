@@ -12,8 +12,12 @@ from .models import (
     FileFingerprint,
     FileVersion,
     IngestionBatch,
+    IngestionCounts,
+    IngestionError,
+    IngestionFileResult,
     IngestionRun,
     NormalizedObservation,
+    ObservationWriteCounts,
     SourceFile,
     SourceInterface,
 )
@@ -28,7 +32,7 @@ from .runs import (
     get_resumable_file_version,
     get_resumable_ingestion_run,
 )
-from .service import ingest_file
+from .service import ingest_file, ingest_file_with_report
 from .snapshots import (
     SourceSnapshotUnavailableError,
     load_source_snapshot,
@@ -56,8 +60,12 @@ __all__ = [
     "FileIngestionInProgressError",
     "FileVersion",
     "IngestionBatch",
+    "IngestionCounts",
+    "IngestionError",
+    "IngestionFileResult",
     "IngestionRun",
     "NormalizedObservation",
+    "ObservationWriteCounts",
     "SourceFile",
     "SourceFileRegressionError",
     "SourceInterface",
@@ -82,6 +90,7 @@ __all__ = [
     "get_source_file",
     "get_source_interfaces",
     "ingest_file",
+    "ingest_file_with_report",
     "insert_raw_observations",
     "load_source_snapshot",
     "normalize_batch",

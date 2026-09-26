@@ -12,6 +12,14 @@ from .models import (
 )
 
 
+class UnknownSourceFileError(ValueError):
+    """Raised when a requested file ID is not registered."""
+
+
+class NoSourceInterfacesError(ValueError):
+    """Raised when a registered file has no configured interfaces."""
+
+
 def get_source_file(file_id: int) -> SourceFile:
     """Load a source-file definition from the RAW database."""
 
@@ -31,7 +39,7 @@ def get_source_file(file_id: int) -> SourceFile:
         ).fetchone()
 
     if row is None:
-        raise ValueError(f"Unknown file_id: {file_id}")
+        raise UnknownSourceFileError(f"Unknown file_id: {file_id}")
 
     return SourceFile(
         file_id=row[0],
@@ -130,4 +138,3 @@ def get_deployments(
         )
         for row in rows
     }
-

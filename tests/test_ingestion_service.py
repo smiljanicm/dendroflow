@@ -12,9 +12,11 @@ from dendroflow.ingestion import (
     IngestionBatch,
     IngestionRun,
     NormalizedObservation,
+    ObservationWriteCounts,
     SourceFile,
     SourceInterface,
     ingest_file,
+    ingest_file_with_report,
     insert_raw_observations,
 )
 from dendroflow.tabular import TabularBatch
@@ -233,9 +235,10 @@ def test_ingest_file(monkeypatch, tmp_path):
         lambda file_id: (interface,),
     )
 
+    completed_run_lookup = {"run": None}
     monkeypatch.setattr(
         "dendroflow.ingestion.service.get_completed_ingestion_run",
-        lambda file_version_id, interface_ids: None,
+        lambda file_version_id, interface_ids: completed_run_lookup["run"],
     )
 
     monkeypatch.setattr(
@@ -292,6 +295,39 @@ def test_ingest_file(monkeypatch, tmp_path):
 
     assert result.status == "completed"
     assert result.ingestion_run_id == 7
+
+    monkeypatch.setattr(
+        "dendroflow.ingestion.service.write_ingestion_batch_with_counts",
+        lambda batch, observations: SimpleNamespace(
+            batch=completed_batch,
+            counts=ObservationWriteCounts(
+                inserted=1,
+                unchanged=0,
+                repeated_identity_rows=0,
+            ),
+        ),
+    )
+    report = ingest_file_with_report(1)
+
+    assert report.file_id == 1
+    assert report.filepath == str(source_file.filepath)
+    assert report.outcome == "completed"
+    assert report.ingestion_run_id == 7
+    assert report.file_version_id == 3
+    assert report.snapshot_hash == "sha256:test"
+    assert report.resumed is False
+    assert report.counts.source_rows_examined == 1
+    assert report.counts.observations_inserted == 1
+    assert report.counts.observations_unchanged == 0
+    assert report.counts.repeated_identity_rows == 0
+    assert report.counts.deferred_trailing_bytes is None
+    assert report.error is None
+
+    completed_run_lookup["run"] = completed_run
+    replay = ingest_file_with_report(1)
+    assert replay.outcome == "already_completed"
+    assert replay.ingestion_run_id == 7
+    assert replay.counts is None
 
 def test_ingest_file_retries_failed_batch(
     monkeypatch,
@@ -793,3 +829,12 @@ def test_ingest_file_skips_completed_batch(
 
     assert result.status == "completed"
     assert result.ingestion_run_id == 7
+
+    report = ingest_file_with_report(1)
+    assert report.outcome == "completed"
+    assert report.resumed is True
+    assert report.ingestion_run_id == 7
+    assert report.counts.source_rows_examined == 1
+    assert report.counts.observations_inserted == 0
+    assert report.counts.observations_unchanged == 0
+    assert report.counts.deferred_trailing_bytes is None
