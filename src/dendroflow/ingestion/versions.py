@@ -11,6 +11,10 @@ from .models import (
 HASH_CHUNK_SIZE = 1024 * 1024
 
 
+class SourceFileRegressionError(RuntimeError):
+    """Raised when a captured source is smaller than accepted content."""
+
+
 def fingerprint_file(path: Path) -> FileFingerprint:
     """Calculate a source file's SHA-256 hash and size."""
 
@@ -31,6 +35,27 @@ def fingerprint_file(path: Path) -> FileFingerprint:
         file_hash=f"sha256:{digest.hexdigest()}",
         file_size=file_size,
     )
+
+
+def get_latest_completed_file_size(file_id: int) -> int | None:
+    """Return the largest snapshot size used by a completed run."""
+
+    with connect("dendroflow_raw") as connection:
+        row = connection.execute(
+            """
+            SELECT MAX(fv.file_size)
+            FROM file_versions AS fv
+            JOIN ingestion_targets AS targets
+                USING (file_version_id)
+            JOIN ingestion_runs AS runs
+                USING (ingestion_run_id)
+            WHERE fv.file_id = %s
+              AND runs.status = 'completed'
+            """,
+            (file_id,),
+        ).fetchone()
+
+    return None if row is None else row[0]
 
 
 def get_or_create_file_version(
@@ -93,4 +118,3 @@ def get_or_create_file_version(
         file_hash=row[2],
         file_size=row[3],
     )
-

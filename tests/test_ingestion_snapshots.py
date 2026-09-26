@@ -2,10 +2,13 @@ import hashlib
 
 import pytest
 
+from dendroflow.ingestion.models import FileFingerprint
 from dendroflow.ingestion.snapshots import (
     SourceFileChangingError,
+    SourceSnapshotUnavailableError,
     _wait_until_stable,
     capture_source_snapshot,
+    load_source_snapshot,
 )
 
 
@@ -81,3 +84,51 @@ def test_capture_snapshot_rejects_source_changed_during_capture(
         )
 
     assert list((tmp_path / "staging" / "1").glob("*.snapshot")) == []
+
+
+def test_load_source_snapshot_verifies_and_reuses_saved_bytes(
+    tmp_path,
+    monkeypatch,
+):
+    content = b"timestamp,value\n2026-01-01,1\n"
+    fingerprint = FileFingerprint(
+        file_hash="sha256:" + hashlib.sha256(content).hexdigest(),
+        file_size=len(content),
+    )
+    staging = tmp_path / "snapshots"
+    saved = staging / "7" / f"{fingerprint.file_hash[7:]}.snapshot"
+    saved.parent.mkdir(parents=True)
+    saved.write_bytes(content)
+    monkeypatch.setenv("DENDROFLOW_SNAPSHOT_DIR", str(staging))
+
+    snapshot = load_source_snapshot(
+        tmp_path / "live.csv",
+        file_id=7,
+        fingerprint=fingerprint,
+    )
+
+    assert snapshot.snapshot_path == saved
+    assert snapshot.snapshot_path.read_bytes() == content
+    assert snapshot.fingerprint == fingerprint
+
+
+def test_load_source_snapshot_rejects_corrupt_saved_bytes(
+    tmp_path,
+    monkeypatch,
+):
+    fingerprint = FileFingerprint(
+        file_hash="sha256:" + hashlib.sha256(b"expected\n").hexdigest(),
+        file_size=len(b"expected\n"),
+    )
+    staging = tmp_path / "snapshots"
+    saved = staging / "7" / f"{fingerprint.file_hash[7:]}.snapshot"
+    saved.parent.mkdir(parents=True)
+    saved.write_bytes(b"different\n")
+    monkeypatch.setenv("DENDROFLOW_SNAPSHOT_DIR", str(staging))
+
+    with pytest.raises(SourceSnapshotUnavailableError, match="failed verification"):
+        load_source_snapshot(
+            tmp_path / "live.csv",
+            file_id=7,
+            fingerprint=fingerprint,
+        )

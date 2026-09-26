@@ -1,6 +1,7 @@
 from dendroflow.database import connect
 
 from .models import (
+    FileVersion,
     IngestionRun,
     SourceInterface,
 )
@@ -243,6 +244,72 @@ def get_resumable_ingestion_run(
     return _ingestion_run_from_row(row)
 
 
+def get_resumable_file_version(
+    file_id: int,
+    interface_ids: tuple[int, ...],
+) -> tuple[IngestionRun, FileVersion] | None:
+    """Find a running file ingestion and its immutable file version."""
+
+    requested_interface_ids = tuple(sorted(set(interface_ids)))
+    if not requested_interface_ids:
+        return None
+
+    with connect("dendroflow_raw") as connection:
+        row = connection.execute(
+            """
+            SELECT
+                ir.ingestion_run_id,
+                ir.started_at,
+                ir.finished_at,
+                ir.status,
+                fv.file_version_id,
+                fv.file_id,
+                fv.file_hash,
+                fv.file_size
+            FROM ingestion_runs AS ir
+            JOIN ingestion_targets AS targets
+                USING (ingestion_run_id)
+            JOIN file_versions AS fv
+                USING (file_version_id)
+            WHERE ir.status = 'running'
+              AND fv.file_id = %s
+            GROUP BY
+                ir.ingestion_run_id,
+                ir.started_at,
+                ir.finished_at,
+                ir.status,
+                fv.file_version_id,
+                fv.file_id,
+                fv.file_hash,
+                fv.file_size
+            HAVING COUNT(*) = %s
+               AND COUNT(*) FILTER (
+                    WHERE targets.interface_id = ANY(%s)
+               ) = %s
+            ORDER BY ir.started_at DESC
+            LIMIT 1
+            """,
+            (
+                file_id,
+                len(requested_interface_ids),
+                list(requested_interface_ids),
+                len(requested_interface_ids),
+            ),
+        ).fetchone()
+
+    if row is None:
+        return None
+
+    run = _ingestion_run_from_row(row[:4])
+    version = FileVersion(
+        file_version_id=row[4],
+        file_id=row[5],
+        file_hash=row[6],
+        file_size=row[7],
+    )
+    return run, version
+
+
 def finalize_ingestion_run(
     ingestion_run_id: int,
     file_version_id: int,
@@ -326,4 +393,3 @@ def finalize_ingestion_run(
             )
 
     return _ingestion_run_from_row(row)
-

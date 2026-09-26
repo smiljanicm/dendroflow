@@ -23,6 +23,10 @@ class SourceFileChangingError(RuntimeError):
     """Raised when a stable source snapshot cannot be captured."""
 
 
+class SourceSnapshotUnavailableError(RuntimeError):
+    """Raised when an interrupted run's retained snapshot is unavailable."""
+
+
 @dataclass(frozen=True)
 class SourceSnapshot:
     """A content-addressed snapshot and its source capture details."""
@@ -32,6 +36,51 @@ class SourceSnapshot:
     fingerprint: FileFingerprint
     captured_size: int
     deferred_bytes: int
+
+
+def load_source_snapshot(
+    source_path: Path,
+    file_id: int,
+    fingerprint: FileFingerprint,
+) -> SourceSnapshot:
+    """Load and verify the immutable snapshot referenced by a file version."""
+
+    digest_name = fingerprint.file_hash.removeprefix("sha256:")
+    if (
+        len(digest_name) != 64
+        or any(character not in "0123456789abcdef" for character in digest_name)
+    ):
+        raise SourceSnapshotUnavailableError(
+            f"Invalid stored snapshot hash for file_id={file_id}"
+        )
+
+    path = snapshot_directory() / str(file_id) / f"{digest_name}.snapshot"
+    if not path.is_file():
+        raise SourceSnapshotUnavailableError(
+            "Cannot resume ingestion because its staged snapshot is missing: "
+            f"file_id={file_id}, snapshot={path}"
+        )
+
+    digest = hashlib.sha256()
+    size = 0
+    with path.open("rb") as source:
+        while chunk := source.read(COPY_CHUNK_SIZE):
+            digest.update(chunk)
+            size += len(chunk)
+    actual_hash = f"sha256:{digest.hexdigest()}"
+    if size != fingerprint.file_size or actual_hash != fingerprint.file_hash:
+        raise SourceSnapshotUnavailableError(
+            "Cannot resume ingestion because its staged snapshot failed "
+            f"verification: file_id={file_id}, snapshot={path}"
+        )
+
+    return SourceSnapshot(
+        source_path=source_path.resolve(),
+        snapshot_path=path,
+        fingerprint=fingerprint,
+        captured_size=size,
+        deferred_bytes=0,
+    )
 
 
 def _setting(name: str, default: str) -> str:

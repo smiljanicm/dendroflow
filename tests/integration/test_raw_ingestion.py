@@ -7,9 +7,9 @@ from psycopg.types.json import Jsonb
 
 from dendroflow.database import connect
 from dendroflow.ingestion import (
+    SourceFileRegressionError,
     create_ingestion_batch,
     create_ingestion_run_with_targets,
-    fingerprint_file,
     get_deployments,
     get_or_create_file_version,
     get_source_file,
@@ -21,6 +21,7 @@ from dendroflow.ingestion import (
     write_ingestion_batch,
 )
 from dendroflow.ingestion.conflicts import ObservationConflictError
+from dendroflow.ingestion.snapshots import capture_source_snapshot
 
 pytestmark = [
     pytest.mark.integration,
@@ -506,13 +507,14 @@ def test_raw_ingestion_resumes_interrupted_run(
 
     source_file = get_source_file(file_id)
 
-    fingerprint = fingerprint_file(
-        source_file.filepath
+    snapshot = capture_source_snapshot(
+        source_file.filepath,
+        file_id,
     )
 
     file_version = get_or_create_file_version(
         file_id,
-        fingerprint,
+        snapshot.fingerprint,
     )
 
     interfaces = get_source_interfaces(file_id)
@@ -530,7 +532,7 @@ def test_raw_ingestion_resumes_interrupted_run(
     )
 
     reader = iter(
-        read_source_file(file_id)
+        read_source_file(file_id, source_path=snapshot.snapshot_path)
     )
 
     # ---------------------------------------
@@ -581,6 +583,13 @@ def test_raw_ingestion_resumes_interrupted_run(
 
     start_ingestion_batch(
         batch_2.ingestion_batch_id
+    )
+
+    path = raw_ingestion_fixture["path"]
+    path.write_text(
+        path.read_text()
+        + "2026-01-02 01:30:00,10.6,4.6\n"
+        + "2026-01-02 01:45:00,10.7,4.7\n"
     )
 
     # ---------------------------------------
@@ -649,6 +658,26 @@ def test_raw_ingestion_resumes_interrupted_run(
     assert observation_count == 12
     assert interface_count == 2
     assert target_count == 2
+
+    appended_run = ingest_file(file_id)
+    assert appended_run.status == "completed"
+    assert appended_run.ingestion_run_id != run.ingestion_run_id
+
+    with connect("dendroflow_raw") as connection:
+        total_observations = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM raw_observations
+            WHERE interface_id IN (
+                SELECT interface_id
+                FROM sensor_file_interfaces
+                WHERE file_id = %s
+            )
+            """,
+            (file_id,),
+        ).fetchone()[0]
+
+    assert total_observations == 16
 
 
 def test_raw_ingestion_appended_snapshot_preserves_overlap_provenance(
@@ -789,3 +818,41 @@ def test_raw_ingestion_historical_value_conflict_preserves_raw_rows(
     assert count == 12
     assert stored_value == 10.0
     assert failed_batches == [("failed", 1)]
+
+
+def test_raw_ingestion_rejects_smaller_source_snapshot(
+    raw_ingestion_fixture,
+    monkeypatch,
+):
+    file_id = raw_ingestion_fixture["file_id"]
+    path = raw_ingestion_fixture["path"]
+    monkeypatch.setenv(
+        "DENDROFLOW_SNAPSHOT_DIR",
+        str(path.parent / "snapshots"),
+    )
+    monkeypatch.setenv("DENDROFLOW_FILE_SETTLE_SECONDS", "0")
+    ingest_file(file_id)
+
+    path.write_text(
+        "TIMESTAMP,value_a,value_b\n"
+        "2026-01-02 00:00:00,10.0,4.0\n"
+    )
+
+    with pytest.raises(SourceFileRegressionError, match="smaller"):
+        ingest_file(file_id)
+
+    with connect("dendroflow_raw") as connection:
+        count = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM raw_observations
+            WHERE interface_id IN (
+                SELECT interface_id
+                FROM sensor_file_interfaces
+                WHERE file_id = %s
+            )
+            """,
+            (file_id,),
+        ).fetchone()[0]
+
+    assert count == 12

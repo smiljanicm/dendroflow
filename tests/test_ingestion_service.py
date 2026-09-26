@@ -19,6 +19,18 @@ from dendroflow.ingestion import (
 from dendroflow.tabular import TabularBatch
 
 
+@pytest.fixture(autouse=True)
+def no_running_or_completed_file_versions(monkeypatch):
+    monkeypatch.setattr(
+        "dendroflow.ingestion.service.get_resumable_file_version",
+        lambda file_id, interface_ids: None,
+    )
+    monkeypatch.setattr(
+        "dendroflow.ingestion.service.get_latest_completed_file_size",
+        lambda file_id: None,
+    )
+
+
 def fake_snapshot(path, file_id):
     return SimpleNamespace(
         snapshot_path=path,

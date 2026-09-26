@@ -6,7 +6,7 @@ from .batches import (
     validate_ingestion_batch_checkpoint,
 )
 from .conflicts import ObservationConflictError
-from .models import IngestionRun
+from .models import FileFingerprint, IngestionRun
 from .normalization import normalize_batch
 from .runs import (
     create_ingestion_run_with_targets,
@@ -14,9 +14,10 @@ from .runs import (
     finish_ingestion_run,
     get_completed_ingestion_run,
     get_ingested_interface_ids,
+    get_resumable_file_version,
     get_resumable_ingestion_run,
 )
-from .snapshots import capture_source_snapshot
+from .snapshots import capture_source_snapshot, load_source_snapshot
 from .sources import (
     get_deployments,
     get_source_file,
@@ -24,6 +25,8 @@ from .sources import (
     read_source_file,
 )
 from .versions import (
+    SourceFileRegressionError,
+    get_latest_completed_file_size,
     get_or_create_file_version,
 )
 from .writer import write_ingestion_batch
@@ -40,17 +43,6 @@ def ingest_file(
         raise ValueError("max_attempts must be at least 1")
 
     source_file = get_source_file(file_id)
-
-    snapshot = capture_source_snapshot(
-        source_file.filepath,
-        file_id,
-    )
-
-    file_version = get_or_create_file_version(
-        file_id,
-        snapshot.fingerprint,
-    )
-
     interfaces = get_source_interfaces(file_id)
 
     if not interfaces:
@@ -63,13 +55,50 @@ def ingest_file(
         for interface in interfaces
     )
 
-    completed_run = get_completed_ingestion_run(
-        file_version.file_version_id,
+    resumable_context = get_resumable_file_version(
+        file_id,
         interface_ids,
     )
+    if resumable_context is not None:
+        resumable_run, file_version = resumable_context
+        snapshot = load_source_snapshot(
+            source_file.filepath,
+            file_id,
+            FileFingerprint(
+                file_hash=file_version.file_hash,
+                file_size=file_version.file_size,
+            ),
+        )
+    else:
+        snapshot = capture_source_snapshot(
+            source_file.filepath,
+            file_id,
+        )
+        latest_size = get_latest_completed_file_size(file_id)
+        if (
+            latest_size is not None
+            and snapshot.fingerprint.file_size < latest_size
+        ):
+            raise SourceFileRegressionError(
+                "Captured source is smaller than the latest completed "
+                f"snapshot for file_id={file_id}: "
+                f"captured_size={snapshot.fingerprint.file_size}, "
+                f"latest_completed_size={latest_size}"
+            )
+        file_version = get_or_create_file_version(
+            file_id,
+            snapshot.fingerprint,
+        )
+        resumable_run = None
 
-    if completed_run is not None:
-        return completed_run
+    if resumable_run is None:
+        completed_run = get_completed_ingestion_run(
+            file_version.file_version_id,
+            interface_ids,
+        )
+
+        if completed_run is not None:
+            return completed_run
 
     ingested_interface_ids = get_ingested_interface_ids(
         file_version.file_version_id
@@ -94,10 +123,11 @@ def ingest_file(
 
     deployments = get_deployments(deployment_ids)
 
-    resumable_run = get_resumable_ingestion_run(
-        file_version.file_version_id,
-        interface_ids,
-    )
+    if resumable_run is None:
+        resumable_run = get_resumable_ingestion_run(
+            file_version.file_version_id,
+            interface_ids,
+        )
 
     if resumable_run is not None:
         run = resumable_run

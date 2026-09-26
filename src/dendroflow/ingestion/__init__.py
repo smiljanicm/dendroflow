@@ -24,9 +24,14 @@ from .runs import (
     finish_ingestion_run,
     get_completed_ingestion_run,
     get_ingested_interface_ids,
+    get_resumable_file_version,
     get_resumable_ingestion_run,
 )
 from .service import ingest_file
+from .snapshots import (
+    SourceSnapshotUnavailableError,
+    load_source_snapshot,
+)
 from .sources import (
     get_deployments,
     get_source_file,
@@ -34,7 +39,9 @@ from .sources import (
     read_source_file,
 )
 from .versions import (
+    SourceFileRegressionError,
     fingerprint_file,
+    get_latest_completed_file_size,
     get_or_create_file_version,
 )
 from .writer import (
@@ -50,7 +57,9 @@ __all__ = [
     "IngestionRun",
     "NormalizedObservation",
     "SourceFile",
+    "SourceFileRegressionError",
     "SourceInterface",
+    "SourceSnapshotUnavailableError",
     "complete_ingestion_batch",
     "create_ingestion_batch",
     "create_ingestion_run",
@@ -63,16 +72,18 @@ __all__ = [
     "get_deployments",
     "get_ingested_interface_ids",
     "get_ingestion_batch",
+    "get_latest_completed_file_size",
     "get_or_create_file_version",
+    "get_resumable_file_version",
     "get_resumable_ingestion_run",
     "get_source_file",
     "get_source_interfaces",
     "ingest_file",
     "insert_raw_observations",
+    "load_source_snapshot",
     "normalize_batch",
     "read_source_file",
     "start_ingestion_batch",
     "validate_ingestion_batch_checkpoint",
     "write_ingestion_batch",
 ]
-

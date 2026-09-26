@@ -994,9 +994,8 @@ task must preserve snapshots referenced by any running or resumable run.
 Unit tests cover content hashing, content-addressed reuse, incomplete trailing
 lines, empty snapshots, and source changes during capture. The existing
 PostgreSQL interruption/resume test uses a temporary staging directory. These
-tests do not yet establish truncation protection, resuming an older snapshot
-after the live source has grown, or concurrent-worker exclusion; those remain
-later growing-file work.
+tests do not yet establish concurrent-worker exclusion; that remains later
+growing-file work.
 
 ## Append overlap and conflict handling (GF3)
 
@@ -1023,6 +1022,25 @@ deletions of existing RAW observations remain outside this workflow.
 Unit tests cover in-batch repeated identities and numeric equality. PostgreSQL
 integration tests cover appending rows, replaying the resulting snapshot, and
 preserving existing RAW values when historical content conflicts.
+
+## Regression protection and interrupted-run recovery (GF4a)
+
+Before starting a new ingestion run, DendroFlow compares the captured snapshot
+size with the largest snapshot size used by a completed run for that logical
+file. A smaller snapshot is rejected before a file version or run is created;
+existing RAW observations remain unchanged. This detects ordinary truncation
+and size regression. It does not infer deletions from a same-size rewrite.
+
+If a run is still marked running, DendroFlow finds its file version before
+capturing the live source and verifies the retained content-addressed snapshot.
+It resumes from those exact bytes even if the live file has grown. Once that
+run completes, a subsequent invocation captures the live file and handles the
+append as a separate run. A missing or corrupt retained snapshot stops resume
+with an explicit error; the service never silently substitutes newer bytes.
+
+Unit tests cover retained-snapshot verification. PostgreSQL integration tests
+cover resuming an interrupted snapshot after a live append and rejecting a
+smaller source while preserving RAW rows.
 
 Run the unit coverage with:
 
