@@ -1,3 +1,4 @@
+import json
 import os
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
@@ -5,6 +6,7 @@ from uuid import uuid4
 import pytest
 from psycopg.types.json import Jsonb
 
+from dendroflow.cli.main import main
 from dendroflow.database import connect
 from dendroflow.ingestion import (
     FileIngestionInProgressError,
@@ -987,3 +989,257 @@ def test_raw_ingestion_rejects_concurrent_worker_without_writes(
     assert version_count == 0
     assert run_target_count == 0
     assert not (snapshot_root / str(file_id)).exists()
+
+
+def run_ingestion_cli(file_id, capsys):
+    exit_code = main([
+        "ingest",
+        "--file-id",
+        str(file_id),
+        "--json",
+    ])
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    return exit_code, json.loads(captured.out)
+
+
+def test_ingestion_cli_new_ingestion_and_completed_replay(
+    raw_ingestion_fixture,
+    monkeypatch,
+    capsys,
+):
+    file_id = raw_ingestion_fixture["file_id"]
+    snapshot_root = raw_ingestion_fixture["path"].parent / "snapshots"
+    monkeypatch.setenv("DENDROFLOW_ENVIRONMENT", "local")
+    monkeypatch.setenv("DENDROFLOW_SNAPSHOT_DIR", str(snapshot_root))
+
+    exit_code, first_report = run_ingestion_cli(file_id, capsys)
+
+    assert exit_code == 0
+    first = first_report["files"][0]
+    assert first["outcome"] == "completed"
+    assert first["counts"]["source_rows_examined"] == 6
+    assert first["counts"]["observations_inserted"] == 12
+    assert first["resumed"] is False
+
+    exit_code, replay_report = run_ingestion_cli(file_id, capsys)
+
+    assert exit_code == 0
+    replay = replay_report["files"][0]
+    assert replay["outcome"] == "already_completed"
+    assert replay["ingestion_run_id"] == first["ingestion_run_id"]
+    assert replay["counts"] is None
+
+    with connect("dendroflow_raw") as connection:
+        observation_count = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM raw_observations
+            WHERE interface_id IN (
+                SELECT interface_id
+                FROM sensor_file_interfaces
+                WHERE file_id = %s
+            )
+            """,
+            (file_id,),
+        ).fetchone()[0]
+
+    assert observation_count == 12
+
+
+def test_ingestion_cli_resumes_interrupted_run(
+    raw_ingestion_fixture,
+    monkeypatch,
+    capsys,
+):
+    file_id = raw_ingestion_fixture["file_id"]
+    path = raw_ingestion_fixture["path"]
+    snapshot_root = path.parent / "snapshots"
+    monkeypatch.setenv("DENDROFLOW_ENVIRONMENT", "local")
+    monkeypatch.setenv("DENDROFLOW_SNAPSHOT_DIR", str(snapshot_root))
+
+    source_file = get_source_file(file_id)
+    snapshot = capture_source_snapshot(source_file.filepath, file_id)
+    file_version = get_or_create_file_version(file_id, snapshot.fingerprint)
+    interfaces = get_source_interfaces(file_id)
+    deployments = get_deployments(
+        tuple(interface.deployment_id for interface in interfaces)
+    )
+    run = create_ingestion_run_with_targets(
+        file_version.file_version_id,
+        interfaces,
+    )
+    reader = iter(read_source_file(file_id, source_path=snapshot.snapshot_path))
+
+    first_batch_data = next(reader)
+    first_batch = create_ingestion_batch(
+        ingestion_run_id=run.ingestion_run_id,
+        file_version_id=file_version.file_version_id,
+        batch_number=1,
+        source_line_start=first_batch_data.source_line_numbers[0],
+        source_line_end=first_batch_data.source_line_numbers[-1],
+        row_count=len(first_batch_data.dataframe),
+    )
+    first_batch = start_ingestion_batch(first_batch.ingestion_batch_id)
+    write_ingestion_batch(
+        first_batch,
+        normalize_batch(
+            first_batch_data,
+            source_file,
+            interfaces,
+            deployments,
+        ),
+    )
+
+    second_batch_data = next(reader)
+    second_batch = create_ingestion_batch(
+        ingestion_run_id=run.ingestion_run_id,
+        file_version_id=file_version.file_version_id,
+        batch_number=2,
+        source_line_start=second_batch_data.source_line_numbers[0],
+        source_line_end=second_batch_data.source_line_numbers[-1],
+        row_count=len(second_batch_data.dataframe),
+    )
+    start_ingestion_batch(second_batch.ingestion_batch_id)
+
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "2026-01-02 01:30:00,10.6,4.6\n"
+        + "2026-01-02 01:45:00,10.7,4.7\n",
+        encoding="utf-8",
+    )
+
+    exit_code, report = run_ingestion_cli(file_id, capsys)
+
+    assert exit_code == 0
+    result = report["files"][0]
+    assert result["outcome"] == "completed"
+    assert result["ingestion_run_id"] == run.ingestion_run_id
+    assert result["resumed"] is True
+    assert result["counts"]["source_rows_examined"] == 6
+    assert result["counts"]["observations_inserted"] == 8
+    assert result["counts"]["deferred_trailing_bytes"] is None
+
+
+def test_ingestion_cli_defers_a_locked_file_without_writes(
+    raw_ingestion_fixture,
+    monkeypatch,
+    capsys,
+):
+    file_id = raw_ingestion_fixture["file_id"]
+    snapshot_root = raw_ingestion_fixture["path"].parent / "snapshots"
+    monkeypatch.setenv("DENDROFLOW_ENVIRONMENT", "local")
+    monkeypatch.setenv("DENDROFLOW_SNAPSHOT_DIR", str(snapshot_root))
+
+    with file_ingestion_lock(file_id):
+        exit_code, report = run_ingestion_cli(file_id, capsys)
+
+    assert exit_code == 3
+    result = report["files"][0]
+    assert result["outcome"] == "deferred"
+    assert result["error"]["category"] == "file_busy"
+    assert result["counts"] is None
+
+    with connect("dendroflow_raw") as connection:
+        version_count = connection.execute(
+            "SELECT COUNT(*) FROM file_versions WHERE file_id = %s",
+            (file_id,),
+        ).fetchone()[0]
+
+    assert version_count == 0
+
+
+def test_ingestion_cli_reports_missing_interfaces_as_configuration_needed(
+    raw_ingestion_fixture,
+    monkeypatch,
+    capsys,
+):
+    file_id = raw_ingestion_fixture["file_id"]
+    snapshot_root = raw_ingestion_fixture["path"].parent / "snapshots"
+    monkeypatch.setenv("DENDROFLOW_ENVIRONMENT", "local")
+    monkeypatch.setenv("DENDROFLOW_SNAPSHOT_DIR", str(snapshot_root))
+
+    with connect("dendroflow_raw") as connection:
+        connection.execute(
+            "DELETE FROM sensor_file_interfaces WHERE file_id = %s",
+            (file_id,),
+        )
+
+    exit_code, report = run_ingestion_cli(file_id, capsys)
+
+    assert exit_code == 1
+    result = report["files"][0]
+    assert result["outcome"] == "needs_configuration"
+    assert result["error"]["category"] == "needs_configuration"
+    assert result["counts"] is None
+
+    with connect("dendroflow_raw") as connection:
+        version_count = connection.execute(
+            "SELECT COUNT(*) FROM file_versions WHERE file_id = %s",
+            (file_id,),
+        ).fetchone()[0]
+
+    assert version_count == 0
+
+
+def test_ingestion_cli_reports_failure_after_prior_batch_commit(
+    raw_ingestion_fixture,
+    monkeypatch,
+    capsys,
+):
+    file_id = raw_ingestion_fixture["file_id"]
+    path = raw_ingestion_fixture["path"]
+    snapshot_root = path.parent / "snapshots"
+    monkeypatch.setenv("DENDROFLOW_ENVIRONMENT", "local")
+    monkeypatch.setenv("DENDROFLOW_SNAPSHOT_DIR", str(snapshot_root))
+
+    path.write_text(
+        "TIMESTAMP,value_a,value_b\n"
+        "2026-01-02 00:45:00,10.3,4.3\n",
+        encoding="utf-8",
+    )
+    seeded_exit, seeded_report = run_ingestion_cli(file_id, capsys)
+    assert seeded_exit == 0
+    assert seeded_report["files"][0]["outcome"] == "completed"
+
+    path.write_text(
+        "TIMESTAMP,value_a,value_b\n"
+        "2026-01-02 00:00:00,10.0,4.0\n"
+        "2026-01-02 00:15:00,10.1,4.1\n"
+        "2026-01-02 00:30:00,10.2,4.2\n"
+        "2026-01-02 00:45:00,99.3,4.3\n"
+        "2026-01-02 01:00:00,10.4,4.4\n"
+        "2026-01-02 01:15:00,10.5,4.5\n",
+        encoding="utf-8",
+    )
+
+    exit_code, report = run_ingestion_cli(file_id, capsys)
+
+    assert exit_code == 1
+    result = report["files"][0]
+    assert result["outcome"] == "failed"
+    assert result["error"]["category"] == "observation_conflict"
+    assert result["counts"]["observations_inserted"] == 4
+    assert result["counts"]["source_rows_examined"] == 4
+
+    with connect("dendroflow_raw") as connection:
+        batches = connection.execute(
+            """
+            SELECT batch_number, status
+            FROM ingestion_batches
+            WHERE ingestion_run_id = %s
+            ORDER BY batch_number
+            """,
+            (result["ingestion_run_id"],),
+        ).fetchall()
+        committed_observations = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM raw_observations
+            WHERE ingestion_run_id = %s
+            """,
+            (result["ingestion_run_id"],),
+        ).fetchone()[0]
+
+    assert batches == [(1, "completed"), (2, "failed")]
+    assert committed_observations == 4

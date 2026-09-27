@@ -216,8 +216,18 @@ precedence, and mixed success and failure. Run them with:
 pytest -q tests/test_cli_ingestion.py
 ```
 
-PostgreSQL integration tests must cover new ingestion, completed replay,
-interrupted-run resume, per-file lock contention, missing interfaces, and a
-batch failure after earlier batches committed. They must use migrated
-development/test databases and unique test records, and must not target
-production. Run the full unit suite with `pytest -q`.
+The PostgreSQL CLI acceptance tests are in
+`tests/integration/test_raw_ingestion.py`. They cover new ingestion, completed
+replay, interrupted-run resume, per-file lock contention, missing interfaces,
+and a batch failure after an earlier batch committed. They use the unique
+records from the integration fixture and run only when the integration
+environment is enabled. Run the CLI acceptance cases with:
+
+```bash
+DENDROFLOW_INTEGRATION=1 pytest -q tests/integration/test_raw_ingestion.py -k ingestion_cli
+```
+
+Run all PostgreSQL integration tests with
+`DENDROFLOW_INTEGRATION=1 pytest -q tests/integration`, and the full unit suite
+with `pytest -q`. Integration tests must use migrated development/test
+databases and must not target production.
