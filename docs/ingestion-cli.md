@@ -40,6 +40,23 @@ This command writes RAW data by design. It has no preview or confirmation
 prompt; the selected IDs (or `--all`) are the operator's explicit request to
 ingest.
 
+## Scope and operational boundary
+
+The CLI ingests files that are already registered in DendroFlow. The
+`--all` option means all registered source files; it does not search source
+directories or register newly discovered files. Add a new file and its
+interfaces through the configuration workflow before ingesting it.
+
+Growing registered files are supported: ingestion captures stable snapshots
+and can resume a run from its stored snapshot. This lets an operator invoke
+ingestion repeatedly as a source file grows without treating already ingested
+rows as new data.
+
+The CLI does not include a scheduler, automatic file discovery, or a
+notification workflow for missing configuration. An external scheduler can
+invoke the CLI, but discovery, registration, and notifying a manager remain
+future operational work.
+
 ## Per-file outcomes
 
 Every selected file has exactly one outcome:

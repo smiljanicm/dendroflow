@@ -8,6 +8,11 @@ DendroFlow aims to provide a reproducible, maintainable workflow for managing da
 
 DendroFlow is currently under active development.
 
+The CONFIG workflow and registered-file RAW ingestion CLI are implemented for
+the current MVP. The ingestion CLI handles growing source files through stable
+snapshots. Automatic discovery and registration of new files, notifications
+that configuration is needed, and built-in scheduling remain future work.
+
 The initial development focuses on:
 
 - structured metadata for monitoring networks (sites, sensors, variables)
