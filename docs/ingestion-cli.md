@@ -208,13 +208,16 @@ standard error.
 
 ## Acceptance tests
 
-The CLI implementation must test argument validation, empty and invalid
-selections, text and JSON output, each outcome, exit-code precedence, mixed
-success and failure, and these PostgreSQL paths: new ingestion, completed
-replay, interrupted-run resume, per-file lock contention, missing interfaces,
-and a batch failure after earlier batches committed. Integration tests must
-use migrated development/test databases and unique test records, and must not
-target production.
+The CLI unit tests in `tests/test_cli_ingestion.py` cover argument validation,
+empty and invalid selections, text and JSON output, each outcome, exit-code
+precedence, and mixed success and failure. Run them with:
 
-The implementation step that adds the tests will document their exact paths
-and commands.
+```bash
+pytest -q tests/test_cli_ingestion.py
+```
+
+PostgreSQL integration tests must cover new ingestion, completed replay,
+interrupted-run resume, per-file lock contention, missing interfaces, and a
+batch failure after earlier batches committed. They must use migrated
+development/test databases and unique test records, and must not target
+production. Run the full unit suite with `pytest -q`.

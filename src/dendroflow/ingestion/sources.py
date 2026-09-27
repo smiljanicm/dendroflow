@@ -20,6 +20,17 @@ class NoSourceInterfacesError(ValueError):
     """Raised when a registered file has no configured interfaces."""
 
 
+def get_source_file_ids() -> tuple[int, ...]:
+    """Return registered source file IDs in ascending order."""
+
+    with connect("dendroflow_raw") as connection:
+        rows = connection.execute(
+            "SELECT file_id FROM files ORDER BY file_id"
+        ).fetchall()
+
+    return tuple(row[0] for row in rows)
+
+
 def get_source_file(file_id: int) -> SourceFile:
     """Load a source-file definition from the RAW database."""
 

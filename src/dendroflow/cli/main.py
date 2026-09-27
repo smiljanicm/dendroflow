@@ -5,6 +5,7 @@ from pathlib import Path
 from dendroflow.database import DATABASES
 from dendroflow.migrations import migrate_database
 
+from . import ingestion as ingestion_cli
 from .configuration import apply, plan, validate
 from .workbook import convert_workbook, export_workbook, validate_workbook_file
 
@@ -55,6 +56,38 @@ def main(argv: list[str] | None = None) -> int:
         description="Apply pending migrations to all DendroFlow databases.",
     )
     migration_parser.set_defaults(handler=migrate)
+
+    ingestion_parser = commands.add_parser(
+        "ingest",
+        help="Ingest registered source files into RAW.",
+        description="Ingest selected registered source files into RAW.",
+    )
+    selection = ingestion_parser.add_mutually_exclusive_group(required=True)
+    selection.add_argument(
+        "--file-id",
+        type=ingestion_cli.positive_integer,
+        action="append",
+        metavar="ID",
+        help="Source file ID to ingest; may be repeated.",
+    )
+    selection.add_argument(
+        "--all",
+        action="store_true",
+        help="Ingest all registered source files.",
+    )
+    ingestion_parser.add_argument(
+        "--max-attempts",
+        type=ingestion_cli.positive_integer,
+        default=3,
+        metavar="N",
+        help="Maximum attempts per batch (default: 3).",
+    )
+    ingestion_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Write one machine-readable JSON report to standard output.",
+    )
+    ingestion_parser.set_defaults(handler=ingestion_cli.ingest)
 
     config_parser = commands.add_parser(
         "config",
