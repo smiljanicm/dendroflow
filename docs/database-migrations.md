@@ -247,8 +247,23 @@ runs `dendroflow migrate` twice, checks the migration records and key tables,
 and drops those databases in cleanup. It does not use the existing
 `dendroflow_metadata`, `dendroflow_raw`, or `dendroflow_clean` databases.
 The extra `DENDROFLOW_FRESH_MIGRATION=1` flag keeps this database-creation
-test out of ordinary integration runs. Installed-wheel acceptance is tracked
-separately.
+test out of ordinary integration runs.
+
+To verify the installed command outside a checkout, run the separate
+packaging smoke test:
+
+```bash
+DENDROFLOW_PACKAGE_SMOKE=1 pytest -q tests/test_installed_wheel.py
+```
+
+This test builds a wheel, installs it and its runtime dependencies into a
+temporary virtual environment, and runs `dendroflow --help` from an unrelated
+directory with `DENDROFLOW_ROOT` unset. It checks that the installed package
+finds every migration and that each SQL file matches the canonical source
+byte-for-byte. It does not connect to PostgreSQL or change any database.
+Building and installing may require access to a Python package index or an
+appropriately configured local wheel cache. The ordinary test suite skips
+this extra packaging check.
 
 ---
 
