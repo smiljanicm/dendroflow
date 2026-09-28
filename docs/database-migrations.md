@@ -232,8 +232,23 @@ canonical SQL into the wheel rather than maintaining two source copies.
 
 For an installed wheel, supply PostgreSQL connection settings as process
 environment variables. In a checkout the project `.env` can also supply them.
-Further installation and clean-database acceptance checks are tracked
-separately from this migration packaging change.
+To check the migration CLI from a completely empty schema, run the opt-in
+integration test against a **disposable** PostgreSQL instance. The configured
+role must be allowed to create databases, and the instance must provide the
+`btree_gist` extension required by the METADATA migrations:
+
+```bash
+DENDROFLOW_INTEGRATION=1 DENDROFLOW_FRESH_MIGRATION=1 \
+  pytest -q tests/integration/test_fresh_migrations.py
+```
+
+The test creates three databases with unique `dendroflow_mvp2b_` names,
+runs `dendroflow migrate` twice, checks the migration records and key tables,
+and drops those databases in cleanup. It does not use the existing
+`dendroflow_metadata`, `dendroflow_raw`, or `dendroflow_clean` databases.
+The extra `DENDROFLOW_FRESH_MIGRATION=1` flag keeps this database-creation
+test out of ordinary integration runs. Installed-wheel acceptance is tracked
+separately.
 
 ---
 
