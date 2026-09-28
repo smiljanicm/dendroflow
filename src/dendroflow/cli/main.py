@@ -5,6 +5,7 @@ from pathlib import Path
 from dendroflow.database import DATABASES
 from dendroflow.migrations import migrate_database
 
+from . import discovery as discovery_cli
 from . import ingestion as ingestion_cli
 from .configuration import apply, plan, validate
 from .workbook import convert_workbook, export_workbook, validate_workbook_file
@@ -88,6 +89,45 @@ def main(argv: list[str] | None = None) -> int:
         help="Write one machine-readable JSON report to standard output.",
     )
     ingestion_parser.set_defaults(handler=ingestion_cli.ingest)
+
+    discovery_parser = commands.add_parser(
+        "discover",
+        help="Find source files that need configuration.",
+        description="Compare files under selected directories with RAW registrations.",
+    )
+    discovery_parser.add_argument(
+        "--root",
+        type=Path,
+        action="append",
+        required=True,
+        metavar="PATH",
+        help="Directory to scan; may be repeated.",
+    )
+    discovery_parser.add_argument(
+        "--recursive",
+        action="store_true",
+        help="Include subdirectories.",
+    )
+    discovery_parser.add_argument(
+        "--include",
+        action="append",
+        default=[],
+        metavar="GLOB",
+        help="Include paths matching this root-relative glob; may be repeated.",
+    )
+    discovery_parser.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        metavar="GLOB",
+        help="Exclude paths matching this root-relative glob; may be repeated.",
+    )
+    discovery_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Write one machine-readable JSON report to standard output.",
+    )
+    discovery_parser.set_defaults(handler=discovery_cli.discover)
 
     config_parser = commands.add_parser(
         "config",

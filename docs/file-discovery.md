@@ -114,6 +114,12 @@ the command emits exactly one JSON object with `schema_version: 1`,
 affected path and an operator-readable message. JSON output does not include
 tracebacks or database credentials.
 
+The summary contains `total` and a count for each file state:
+`unregistered`, `needs_configuration`, `registered`, and `missing`. The
+`total` includes both discovered files and in-scope missing registrations.
+Text output is the default; JSON output contains no extra progress or status
+lines.
+
 Exit codes:
 
 | Code | Meaning |
