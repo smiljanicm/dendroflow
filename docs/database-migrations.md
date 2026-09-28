@@ -216,19 +216,24 @@ For a data-engineering project, explicit SQL also makes the database architectur
 
 ---
 
-## Future Migration Tooling
+## Running migrations
 
-A migration runner may be introduced later if manually applying migration files becomes inconvenient.
+`dendroflow migrate` applies pending SQL migrations to the METADATA, RAW, and
+CLEAN databases. Migrations are recorded independently in each database's
+`schema_migrations` table. The original SQL files under `db/` remain the
+canonical, version-controlled migration history.
 
-Possible future approaches include:
+For a checkout, run the command from the project root or set
+`DENDROFLOW_ROOT` to that root. Installed wheels include copies of the same
+SQL files, so migration lookup also works outside a checkout without
+`DENDROFLOW_ROOT`. An explicitly configured `DENDROFLOW_ROOT` must contain
+`db/`; a missing directory is reported as an error. The build copies the
+canonical SQL into the wheel rather than maintaining two source copies.
 
-- a small project-specific migration runner
-- a dedicated migration framework
-- SQLAlchemy/Alembic if the application architecture eventually benefits from it
-
-Migration tooling should be introduced when it solves an actual operational problem rather than being treated as a requirement from the beginning.
-
-The underlying migration files should remain understandable and reviewable SQL.
+For an installed wheel, supply PostgreSQL connection settings as process
+environment variables. In a checkout the project `.env` can also supply them.
+Further installation and clean-database acceptance checks are tracked
+separately from this migration packaging change.
 
 ---
 
@@ -248,11 +253,9 @@ The underlying migration files should remain understandable and reviewable SQL.
 
 ---
 
-## Current Status
+## Current status
 
-The PostgreSQL development infrastructure is established.
-
-The three databases are created and independently accessible:
+PostgreSQL initializes three independently migrated databases:
 
 ```text
 dendroflow_metadata
@@ -260,26 +263,7 @@ dendroflow_raw
 dendroflow_clean
 ```
 
-The current data architecture is documented in:
-
-```text
-docs/data-architecture.md
-```
-
-The next implementation step is to create the initial migrations for the three databases, beginning with:
-
-```text
-db/metadata/migrations/001_initial.sql
-```
-
-The initial metadata migration will implement the currently defined metadata schema, including:
-
-- sites
-- location types
-- locations
-- location labels
-- sensor types
-- sensor models
-- sensors
-- variables
-- deployments
+The migrations in `db/metadata/migrations/`, `db/raw/migrations/`, and
+`db/clean/migrations/` are present. `docs/data-architecture.md` explains
+the data model. Docker initialization creates the database names on an empty
+volume, and `dendroflow migrate` installs or advances their schemas.

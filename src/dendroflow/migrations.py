@@ -9,16 +9,16 @@ MIGRATION_FILENAME_PATTERN = re.compile(r"^\d{3}_[a-z0-9_]+\.sql$")
 
 def get_migrations_directory(database: str) -> Path:
     """Return the migrations directory for a DendroFlow database."""
-    project_root = Path(
-        os.getenv("DENDROFLOW_ROOT", Path.cwd())
-    )
+    relative_path = Path(database.removeprefix("dendroflow_")) / "migrations"
+    configured_root = os.getenv("DENDROFLOW_ROOT")
+    if configured_root is not None:
+        return Path(configured_root) / "db" / relative_path
 
-    return (
-        project_root
-        / "db"
-        / database.removeprefix("dendroflow_")
-        / "migrations"
-    )
+    checkout_directory = Path.cwd() / "db" / relative_path
+    if checkout_directory.is_dir():
+        return checkout_directory
+
+    return Path(__file__).resolve().parent / "sql" / relative_path
 
 
 def validate_migration_filename(path: Path) -> None:
@@ -119,4 +119,3 @@ def migrate_database(database: str) -> list[str]:
         applied_versions.append(migration_file.name)
 
     return applied_versions
-
