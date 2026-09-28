@@ -133,6 +133,14 @@ If a partial scan also finds actionable file states, the command returns `1`;
 the report's `complete` field remains false and lists scan errors. This gives
 the operator both the findings and the need to resolve incomplete coverage.
 
+The database-backed acceptance test exercises all four file states, repeated
+and filtered scans, and verifies that discovery leaves RAW registrations and
+source files unchanged. Run it against the integration databases with:
+
+```bash
+DENDROFLOW_INTEGRATION=1 pytest -q tests/integration/test_file_discovery.py
+```
+
 ## Acceptance criteria
 
 - Repeated scans of the same tree produce the same file states unless the
