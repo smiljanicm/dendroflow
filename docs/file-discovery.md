@@ -69,8 +69,10 @@ once, even if roots overlap.
 
 Only registrations whose normalized paths fall under one of the selected
 roots and match the include/exclude filters are in scope for missing-file
-checks. A registration outside the selected roots is not considered missing.
-An excluded registered path is outside the scan scope.
+checks. With recursive scanning disabled, only paths directly inside a root
+are in scope; nested registrations are not considered missing. A registration
+outside the selected roots is not considered missing. An excluded registered
+path is outside the scan scope.
 
 ## Reported file states
 
@@ -87,6 +89,8 @@ A registered path in scope that does not exist on disk is reported as
 
 The report includes normalized path, state, and file ID when one exists. For
 registered files it also includes the number of configured interfaces.
+If distinct registrations normalize to the same path, comparison reports an
+explicit error instead of choosing one registration.
 
 ## Incomplete scans
 
