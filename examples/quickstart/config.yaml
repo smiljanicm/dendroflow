@@ -1,0 +1,48 @@
+sites:
+  - ref: site
+    site_code: quickstart_site
+    name: Quickstart site
+location_types:
+  - ref: place
+    type: quickstart_plot
+sensor_types:
+  - ref: kind
+    type: quickstart_logger
+variables:
+  - ref: variable
+    variable: quickstart_water_level
+sensor_models:
+  - ref: model
+    manufacturer: Quickstart
+    model: example_logger
+    sensor_type: kind
+sensors:
+  - ref: sensor
+    serial_number: quickstart_sensor_1
+    sensor_model: model
+locations:
+  - ref: location
+    site: site
+    location_type: place
+    initial_label:
+      label: L1
+      valid_from: '2026-01-01T00:00:00Z'
+deployments:
+  - ref: deployment
+    sensor: sensor
+    location: location
+    variable: variable
+    valid_from: '2026-01-01T00:00:00Z'
+files:
+  - path: .demo/logger.csv
+    timestamp:
+      timezone: UTC
+      format: '%Y-%m-%d %H:%M:%S'
+    reader:
+      type: csv
+      options: {}
+    interfaces:
+      - deployment: deployment
+        timestamp_column: TIMESTAMP
+        values_column: value
+        unit: cm
