@@ -28,6 +28,7 @@ The initial development focuses on:
 - [RAW ingestion](docs/raw-ingestion.md) — file versioning, provenance, batching, retries, and resume behavior
 - [Database migrations](docs/database-migrations.md) — migration structure and execution
 - [Recovery contract](docs/recovery.md) — backup scope, consistent restore, and acceptance checks
+- [Recovery runbook](docs/recovery-runbook.md) — operator backup, isolated restore, and verification steps
 - [Ingestion CLI](docs/ingestion-cli.md) — run registered files and interpret text or JSON results
 - [File discovery](docs/file-discovery.md) — scan selected directories and identify files that need configuration
 - [Configuration persistence](docs/configuration-persistence.md) — METADATA and RAW persistence, public apply functions, transaction outcomes, and recovery boundaries

@@ -1,12 +1,13 @@
-# Recovery contract (MVP3a)
+# Recovery contract
 
 ## Goal and boundary
 
 An operator must be able to recover DendroFlow's configuration, RAW data,
 provenance, and ability to continue ingestion after losing a database host or
 application host. This document defines the recoverable state and the checks
-for a restore drill. MVP3b will exercise a restore on disposable databases;
-MVP3c will record the tested operator commands.
+for a restore drill. The opt-in MVP3b drill exercises an isolated restore.
+The [operator runbook](recovery-runbook.md) describes the backup and restore
+steps for a particular environment.
 
 DendroFlow does not currently create backups, schedule them, or manage their
 retention. Those are deployment responsibilities. This contract does not
