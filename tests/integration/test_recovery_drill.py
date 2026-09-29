@@ -16,6 +16,19 @@ from psycopg import sql
 
 from dendroflow.cli.main import main
 from dendroflow.database import DATABASES, connect
+from dendroflow.ingestion import (
+    create_ingestion_batch,
+    create_ingestion_run_with_targets,
+    get_deployments,
+    get_or_create_file_version,
+    get_source_file,
+    get_source_interfaces,
+    normalize_batch,
+    read_source_file,
+    start_ingestion_batch,
+    write_ingestion_batch,
+)
+from dendroflow.ingestion.snapshots import capture_source_snapshot
 
 pytestmark = [
     pytest.mark.integration,
@@ -84,7 +97,7 @@ def _target(monkeypatch, port, snapshot_root):
     monkeypatch.setenv("DENDROFLOW_FILE_SETTLE_SECONDS", "0")
 
 
-def _config(source, tag):
+def _config(source, tag, *, chunksize=None):
     return {
         "sites": [{"ref": "site", "site_code": tag, "name": tag}],
         "location_types": [{"ref": "place", "type": tag}],
@@ -110,7 +123,10 @@ def _config(source, tag):
         "files": [{
             "path": str(source),
             "timestamp": {"timezone": "UTC", "format": "%Y-%m-%d %H:%M:%S"},
-            "reader": {"type": "csv", "options": {}},
+            "reader": {
+                "type": "csv",
+                "options": {} if chunksize is None else {"chunksize": chunksize},
+            },
             "interfaces": [{
                 "deployment": "deployment", "timestamp_column": "TIMESTAMP",
                 "values_column": "value", "unit": "cm",
@@ -178,6 +194,46 @@ def _assert_cli(capsys, *args):
     output = capsys.readouterr()
     assert result == 0, output.out + output.err
     return output.out
+
+
+def _interrupt_after_one_batch(file_id):
+    """Commit one batch and leave the next batch running for restore."""
+    source_file = get_source_file(file_id)
+    snapshot = capture_source_snapshot(source_file.filepath, file_id)
+    version = get_or_create_file_version(file_id, snapshot.fingerprint)
+    interfaces = get_source_interfaces(file_id)
+    deployments = get_deployments(
+        tuple(interface.deployment_id for interface in interfaces)
+    )
+    run = create_ingestion_run_with_targets(version.file_version_id, interfaces)
+    reader = iter(read_source_file(file_id, source_path=snapshot.snapshot_path))
+
+    first_data = next(reader)
+    first = create_ingestion_batch(
+        ingestion_run_id=run.ingestion_run_id,
+        file_version_id=version.file_version_id,
+        batch_number=1,
+        source_line_start=first_data.source_line_numbers[0],
+        source_line_end=first_data.source_line_numbers[-1],
+        row_count=len(first_data.dataframe),
+    )
+    first = start_ingestion_batch(first.ingestion_batch_id)
+    write_ingestion_batch(
+        first,
+        normalize_batch(first_data, source_file, interfaces, deployments),
+    )
+
+    second_data = next(reader)
+    second = create_ingestion_batch(
+        ingestion_run_id=run.ingestion_run_id,
+        file_version_id=version.file_version_id,
+        batch_number=2,
+        source_line_start=second_data.source_line_numbers[0],
+        source_line_end=second_data.source_line_numbers[-1],
+        row_count=len(second_data.dataframe),
+    )
+    start_ingestion_batch(second.ingestion_batch_id)
+    return run, version, snapshot
 
 
 def test_backup_restore_all_databases_and_file_assets(tmp_path, monkeypatch, capsys):
@@ -299,6 +355,139 @@ def test_backup_restore_all_databases_and_file_assets(tmp_path, monkeypatch, cap
         after = _state()
         assert len(after["observations"]) == 3
         assert after["observations"][:2] == expected["observations"]
+    finally:
+        for name in reversed(started):
+            subprocess.run(
+                ["docker", "stop", name], check=False,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30,
+            )
+
+
+def test_restore_resumes_interrupted_snapshot_before_live_append(
+    tmp_path, monkeypatch, capsys,
+):
+    assert shutil.which("docker"), "Recovery drill requires Docker and postgres:16"
+    tag = uuid4().hex
+    original = f"dendroflow-recovery-source-{tag}"
+    restored = f"dendroflow-recovery-restored-{tag}"
+    env_file = tmp_path / "postgres.env"
+    env_file.write_text(
+        "POSTGRES_USER=dendroflow_test\n"
+        "POSTGRES_PASSWORD=recovery-test-only\n"
+        "POSTGRES_DB=postgres\n",
+        encoding="utf-8",
+    )
+    env_file.chmod(0o600)
+    started = []
+    snapshot_root = tmp_path / "snapshots"
+    source = tmp_path / "source.csv"
+    config_path = tmp_path / "config.yaml"
+    backup = tmp_path / "backup"
+    backup.mkdir()
+
+    try:
+        started.append(original)
+        source_port = _start_postgres(original, env_file)
+        _create_databases(source_port)
+        _target(monkeypatch, source_port, snapshot_root)
+        _assert_cli(capsys, "migrate")
+
+        source.write_text(
+            "TIMESTAMP,value\n"
+            "2026-01-02 00:00:00,10.0\n"
+            "2026-01-02 00:15:00,11.0\n",
+            encoding="utf-8",
+        )
+        config_path.write_text(
+            yaml.safe_dump(_config(source, tag, chunksize=1), sort_keys=False),
+            encoding="utf-8",
+        )
+        _assert_cli(capsys, "config", "apply", str(config_path), "--yes")
+        with connect("dendroflow_raw") as connection:
+            file_id = connection.execute("SELECT file_id FROM files").fetchone()[0]
+
+        run, version, snapshot = _interrupt_after_one_batch(file_id)
+        expected = _state()
+        assert expected["runs"] == [(run.ingestion_run_id, "running")]
+        assert len(expected["observations"]) == 1
+        with connect("dendroflow_raw") as connection:
+            batches_before = connection.execute(
+                "SELECT batch_number, status, attempt_count FROM ingestion_batches "
+                "WHERE ingestion_run_id = %s ORDER BY batch_number",
+                (run.ingestion_run_id,),
+            ).fetchall()
+        assert batches_before == [(1, "completed", 1), (2, "running", 1)]
+
+        shutil.copy2(source, backup / "source.csv")
+        shutil.copy2(config_path, backup / "config.yaml")
+        shutil.copytree(snapshot_root, backup / "snapshots")
+        for database in DATABASES:
+            (backup / f"{database}.dump").write_bytes(
+                _docker("exec", original, "pg_dump", "-U", "dendroflow_test",
+                        "-d", database, "-Fc", "--no-owner", "--no-acl")
+            )
+
+        _docker("stop", original)
+        started.remove(original)
+        source.unlink()
+        config_path.unlink()
+        shutil.rmtree(snapshot_root)
+
+        started.append(restored)
+        restore_port = _start_postgres(restored, env_file)
+        _create_databases(restore_port)
+        for database in DATABASES:
+            _docker(
+                "exec", "-i", restored, "pg_restore", "-U", "dendroflow_test",
+                "-d", database, "--no-owner", "--no-acl", "--exit-on-error",
+                input_bytes=(backup / f"{database}.dump").read_bytes(),
+            )
+        shutil.copy2(backup / "source.csv", source)
+        shutil.copy2(backup / "config.yaml", config_path)
+        shutil.copytree(backup / "snapshots", snapshot_root)
+        _target(monkeypatch, restore_port, snapshot_root)
+
+        assert _state() == expected
+        assert snapshot.snapshot_path.read_bytes() == (backup / "source.csv").read_bytes()
+        assert snapshot.fingerprint.file_hash == version.file_hash
+        with source.open("a", encoding="utf-8") as target:
+            target.write("2026-01-02 00:30:00,12.0\n")
+
+        resumed = json.loads(_assert_cli(capsys, "ingest", "--all", "--json"))
+        result = resumed["files"][0]
+        assert result["outcome"] == "completed"
+        assert result["resumed"] is True
+        assert result["ingestion_run_id"] == run.ingestion_run_id
+        assert result["file_version_id"] == version.file_version_id
+        assert result["snapshot_hash"] == version.file_hash
+        assert result["counts"]["observations_inserted"] == 1
+        after_resume = _state()
+        assert len(after_resume["observations"]) == 2
+        assert after_resume["observations"][0] == expected["observations"][0]
+        assert [row[-1] for row in after_resume["observations"]] == [2, 3]
+        assert after_resume["runs"] == [(run.ingestion_run_id, "completed")]
+        with connect("dendroflow_raw") as connection:
+            batches_after = connection.execute(
+                "SELECT batch_number, status, attempt_count FROM ingestion_batches "
+                "WHERE ingestion_run_id = %s ORDER BY batch_number",
+                (run.ingestion_run_id,),
+            ).fetchall()
+        assert batches_after == [(1, "completed", 1), (2, "completed", 2)]
+
+        appended = json.loads(_assert_cli(capsys, "ingest", "--all", "--json"))
+        result = appended["files"][0]
+        assert result["outcome"] == "completed"
+        assert result["resumed"] is False
+        assert result["ingestion_run_id"] != run.ingestion_run_id
+        assert result["file_version_id"] != version.file_version_id
+        assert result["counts"]["observations_inserted"] == 1
+        final = _state()
+        assert len(final["observations"]) == 3
+        assert len(final["versions"]) == 2
+        assert len(final["runs"]) == 2
+        assert all(status == "completed" for _, status in final["runs"])
+        assert final["observations"][:2] == after_resume["observations"]
+        assert final["observations"][2][-1] == 4
     finally:
         for name in reversed(started):
             subprocess.run(

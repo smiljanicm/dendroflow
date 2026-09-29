@@ -3,7 +3,9 @@
 This runbook implements the [recovery contract](recovery.md). The MVP3b drill
 has verified a three-database `pg_dump`/`pg_restore` cycle, restored a source
 file and staged snapshot, replayed a completed ingestion, and ingested an
-append in disposable PostgreSQL containers. The commands below are templates
+append in disposable PostgreSQL containers. An additional drill restores a
+running ingestion and verifies that it resumes from its old snapshot before
+processing the live-file append. The commands below are templates
 for an operator to adapt to the actual file locations and PostgreSQL target;
 they have not been exercised against a lab deployment.
 

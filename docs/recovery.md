@@ -110,6 +110,12 @@ temporary containers in cleanup, including on assertion failure. The extra
 `DENDROFLOW_RECOVERY_DRILL=1` flag keeps this Docker drill out of ordinary
 integration runs.
 
+The second drill case backs up a run after one completed batch and one started
+batch. After restoring its database and snapshot, it grows the live file and
+checks that the original run resumes from the retained snapshot, preserving
+the completed batch and finishing the interrupted batch. A later invocation
+ingests the append as a distinct file version and run.
+
 These checks establish recoverability for the tested backup set and release.
 They do not establish a backup schedule, retention policy, recovery time
 objective, or recovery point objective for a particular lab deployment.
