@@ -1,0 +1,781 @@
+# VM-only PEL trial; not a production sensor inventory.
+sites:
+- ref: site
+  site_code: pel_trial_site
+  name: PEL trial (provisional channel mapping)
+  description: VM-only trial; sensor identities and labels are placeholders.
+location_types:
+- ref: channel
+  type: pel_trial_channel
+sensor_types:
+- ref: sensor_type
+  type: pel_trial_sensor_channel
+variables:
+- ref: variable_battery_voltage_min_5min
+  variable: pel_trial_battery_voltage_min_5min
+- ref: variable_air_temperature_avg
+  variable: pel_trial_air_temperature_avg
+- ref: variable_battery_voltage_min_hourly
+  variable: pel_trial_battery_voltage_min_hourly
+- ref: variable_bulk_ec_avg
+  variable: pel_trial_bulk_ec_avg
+- ref: variable_dendro_fullbr_avg
+  variable: pel_trial_dendro_fullbr_avg
+- ref: variable_permittivity_avg
+  variable: pel_trial_permittivity_avg
+- ref: variable_relative_humidity
+  variable: pel_trial_relative_humidity
+- ref: variable_soil_temperature_avg
+  variable: pel_trial_soil_temperature_avg
+- ref: variable_vwc_avg
+  variable: pel_trial_vwc_avg
+sensor_models:
+- ref: model
+  manufacturer: TRIAL_ONLY
+  model: provisional_channel
+  sensor_type: sensor_type
+sensors:
+- ref: sensor_logger
+  serial_number: TRIAL-PEL-LOGGER
+  sensor_model: model
+  description: Provisional identity for VM acceptance trial only.
+- ref: sensor_air_2m
+  serial_number: TRIAL-PEL-AIR_2M
+  sensor_model: model
+  description: Provisional identity for VM acceptance trial only.
+- ref: sensor_air_5m
+  serial_number: TRIAL-PEL-AIR_5M
+  sensor_model: model
+  description: Provisional identity for VM acceptance trial only.
+- ref: sensor_air_10m
+  serial_number: TRIAL-PEL-AIR_10M
+  sensor_model: model
+  description: Provisional identity for VM acceptance trial only.
+- ref: sensor_soil_5cm
+  serial_number: TRIAL-PEL-SOIL_5CM
+  sensor_model: model
+  description: Provisional identity for VM acceptance trial only.
+- ref: sensor_soil_10cm
+  serial_number: TRIAL-PEL-SOIL_10CM
+  sensor_model: model
+  description: Provisional identity for VM acceptance trial only.
+- ref: sensor_soil_20cm
+  serial_number: TRIAL-PEL-SOIL_20CM
+  sensor_model: model
+  description: Provisional identity for VM acceptance trial only.
+- ref: sensor_soil_30cm
+  serial_number: TRIAL-PEL-SOIL_30CM
+  sensor_model: model
+  description: Provisional identity for VM acceptance trial only.
+- ref: sensor_soil_40cm
+  serial_number: TRIAL-PEL-SOIL_40CM
+  sensor_model: model
+  description: Provisional identity for VM acceptance trial only.
+- ref: sensor_soil_50cm
+  serial_number: TRIAL-PEL-SOIL_50CM
+  sensor_model: model
+  description: Provisional identity for VM acceptance trial only.
+- ref: sensor_soil_60cm
+  serial_number: TRIAL-PEL-SOIL_60CM
+  sensor_model: model
+  description: Provisional identity for VM acceptance trial only.
+- ref: sensor_soil_75cm
+  serial_number: TRIAL-PEL-SOIL_75CM
+  sensor_model: model
+  description: Provisional identity for VM acceptance trial only.
+- ref: sensor_soil_100cm
+  serial_number: TRIAL-PEL-SOIL_100CM
+  sensor_model: model
+  description: Provisional identity for VM acceptance trial only.
+- ref: sensor_dendro_1
+  serial_number: TRIAL-PEL-DENDRO_1
+  sensor_model: model
+  description: Provisional identity for VM acceptance trial only.
+- ref: sensor_dendro_2
+  serial_number: TRIAL-PEL-DENDRO_2
+  sensor_model: model
+  description: Provisional identity for VM acceptance trial only.
+- ref: sensor_dendro_3
+  serial_number: TRIAL-PEL-DENDRO_3
+  sensor_model: model
+  description: Provisional identity for VM acceptance trial only.
+- ref: sensor_dendro_4
+  serial_number: TRIAL-PEL-DENDRO_4
+  sensor_model: model
+  description: Provisional identity for VM acceptance trial only.
+- ref: sensor_dendro_5
+  serial_number: TRIAL-PEL-DENDRO_5
+  sensor_model: model
+  description: Provisional identity for VM acceptance trial only.
+locations:
+- ref: location_logger
+  site: site
+  location_type: channel
+  initial_label:
+    label: PEL-LOGGER
+    valid_from: '2025-01-01T00:00:00Z'
+- ref: location_air_2m
+  site: site
+  location_type: channel
+  initial_label:
+    label: PEL-AIR-2M
+    valid_from: '2025-01-01T00:00:00Z'
+- ref: location_air_5m
+  site: site
+  location_type: channel
+  initial_label:
+    label: PEL-AIR-5M
+    valid_from: '2025-01-01T00:00:00Z'
+- ref: location_air_10m
+  site: site
+  location_type: channel
+  initial_label:
+    label: PEL-AIR-10M
+    valid_from: '2025-01-01T00:00:00Z'
+- ref: location_soil_5cm
+  site: site
+  location_type: channel
+  initial_label:
+    label: PEL-SOIL-5CM
+    valid_from: '2025-01-01T00:00:00Z'
+- ref: location_soil_10cm
+  site: site
+  location_type: channel
+  initial_label:
+    label: PEL-SOIL-10CM
+    valid_from: '2025-01-01T00:00:00Z'
+- ref: location_soil_20cm
+  site: site
+  location_type: channel
+  initial_label:
+    label: PEL-SOIL-20CM
+    valid_from: '2025-01-01T00:00:00Z'
+- ref: location_soil_30cm
+  site: site
+  location_type: channel
+  initial_label:
+    label: PEL-SOIL-30CM
+    valid_from: '2025-01-01T00:00:00Z'
+- ref: location_soil_40cm
+  site: site
+  location_type: channel
+  initial_label:
+    label: PEL-SOIL-40CM
+    valid_from: '2025-01-01T00:00:00Z'
+- ref: location_soil_50cm
+  site: site
+  location_type: channel
+  initial_label:
+    label: PEL-SOIL-50CM
+    valid_from: '2025-01-01T00:00:00Z'
+- ref: location_soil_60cm
+  site: site
+  location_type: channel
+  initial_label:
+    label: PEL-SOIL-60CM
+    valid_from: '2025-01-01T00:00:00Z'
+- ref: location_soil_75cm
+  site: site
+  location_type: channel
+  initial_label:
+    label: PEL-SOIL-75CM
+    valid_from: '2025-01-01T00:00:00Z'
+- ref: location_soil_100cm
+  site: site
+  location_type: channel
+  initial_label:
+    label: PEL-SOIL-100CM
+    valid_from: '2025-01-01T00:00:00Z'
+- ref: location_dendro_1
+  site: site
+  location_type: channel
+  initial_label:
+    label: PEL01
+    valid_from: '2025-01-01T00:00:00Z'
+- ref: location_dendro_2
+  site: site
+  location_type: channel
+  initial_label:
+    label: PEL02
+    valid_from: '2025-01-01T00:00:00Z'
+- ref: location_dendro_3
+  site: site
+  location_type: channel
+  initial_label:
+    label: PEL03
+    valid_from: '2025-01-01T00:00:00Z'
+- ref: location_dendro_4
+  site: site
+  location_type: channel
+  initial_label:
+    label: PEL04
+    valid_from: '2025-01-01T00:00:00Z'
+- ref: location_dendro_5
+  site: site
+  location_type: channel
+  initial_label:
+    label: PEL05
+    valid_from: '2025-01-01T00:00:00Z'
+deployments:
+- ref: deployment_logger_battery_voltage_min_5min
+  sensor: sensor_logger
+  location: location_logger
+  variable: variable_battery_voltage_min_5min
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_air_2m_air_temperature_avg
+  sensor: sensor_air_2m
+  location: location_air_2m
+  variable: variable_air_temperature_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_air_5m_air_temperature_avg
+  sensor: sensor_air_5m
+  location: location_air_5m
+  variable: variable_air_temperature_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_air_10m_air_temperature_avg
+  sensor: sensor_air_10m
+  location: location_air_10m
+  variable: variable_air_temperature_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_logger_battery_voltage_min_hourly
+  sensor: sensor_logger
+  location: location_logger
+  variable: variable_battery_voltage_min_hourly
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_5cm_bulk_ec_avg
+  sensor: sensor_soil_5cm
+  location: location_soil_5cm
+  variable: variable_bulk_ec_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_10cm_bulk_ec_avg
+  sensor: sensor_soil_10cm
+  location: location_soil_10cm
+  variable: variable_bulk_ec_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_20cm_bulk_ec_avg
+  sensor: sensor_soil_20cm
+  location: location_soil_20cm
+  variable: variable_bulk_ec_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_30cm_bulk_ec_avg
+  sensor: sensor_soil_30cm
+  location: location_soil_30cm
+  variable: variable_bulk_ec_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_40cm_bulk_ec_avg
+  sensor: sensor_soil_40cm
+  location: location_soil_40cm
+  variable: variable_bulk_ec_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_50cm_bulk_ec_avg
+  sensor: sensor_soil_50cm
+  location: location_soil_50cm
+  variable: variable_bulk_ec_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_60cm_bulk_ec_avg
+  sensor: sensor_soil_60cm
+  location: location_soil_60cm
+  variable: variable_bulk_ec_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_75cm_bulk_ec_avg
+  sensor: sensor_soil_75cm
+  location: location_soil_75cm
+  variable: variable_bulk_ec_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_100cm_bulk_ec_avg
+  sensor: sensor_soil_100cm
+  location: location_soil_100cm
+  variable: variable_bulk_ec_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_dendro_1_dendro_fullbr_avg
+  sensor: sensor_dendro_1
+  location: location_dendro_1
+  variable: variable_dendro_fullbr_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_dendro_2_dendro_fullbr_avg
+  sensor: sensor_dendro_2
+  location: location_dendro_2
+  variable: variable_dendro_fullbr_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_dendro_3_dendro_fullbr_avg
+  sensor: sensor_dendro_3
+  location: location_dendro_3
+  variable: variable_dendro_fullbr_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_dendro_4_dendro_fullbr_avg
+  sensor: sensor_dendro_4
+  location: location_dendro_4
+  variable: variable_dendro_fullbr_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_dendro_5_dendro_fullbr_avg
+  sensor: sensor_dendro_5
+  location: location_dendro_5
+  variable: variable_dendro_fullbr_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_5cm_permittivity_avg
+  sensor: sensor_soil_5cm
+  location: location_soil_5cm
+  variable: variable_permittivity_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_10cm_permittivity_avg
+  sensor: sensor_soil_10cm
+  location: location_soil_10cm
+  variable: variable_permittivity_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_20cm_permittivity_avg
+  sensor: sensor_soil_20cm
+  location: location_soil_20cm
+  variable: variable_permittivity_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_30cm_permittivity_avg
+  sensor: sensor_soil_30cm
+  location: location_soil_30cm
+  variable: variable_permittivity_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_40cm_permittivity_avg
+  sensor: sensor_soil_40cm
+  location: location_soil_40cm
+  variable: variable_permittivity_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_50cm_permittivity_avg
+  sensor: sensor_soil_50cm
+  location: location_soil_50cm
+  variable: variable_permittivity_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_60cm_permittivity_avg
+  sensor: sensor_soil_60cm
+  location: location_soil_60cm
+  variable: variable_permittivity_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_75cm_permittivity_avg
+  sensor: sensor_soil_75cm
+  location: location_soil_75cm
+  variable: variable_permittivity_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_100cm_permittivity_avg
+  sensor: sensor_soil_100cm
+  location: location_soil_100cm
+  variable: variable_permittivity_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_air_2m_relative_humidity
+  sensor: sensor_air_2m
+  location: location_air_2m
+  variable: variable_relative_humidity
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_air_5m_relative_humidity
+  sensor: sensor_air_5m
+  location: location_air_5m
+  variable: variable_relative_humidity
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_air_10m_relative_humidity
+  sensor: sensor_air_10m
+  location: location_air_10m
+  variable: variable_relative_humidity
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_5cm_soil_temperature_avg
+  sensor: sensor_soil_5cm
+  location: location_soil_5cm
+  variable: variable_soil_temperature_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_10cm_soil_temperature_avg
+  sensor: sensor_soil_10cm
+  location: location_soil_10cm
+  variable: variable_soil_temperature_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_20cm_soil_temperature_avg
+  sensor: sensor_soil_20cm
+  location: location_soil_20cm
+  variable: variable_soil_temperature_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_30cm_soil_temperature_avg
+  sensor: sensor_soil_30cm
+  location: location_soil_30cm
+  variable: variable_soil_temperature_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_40cm_soil_temperature_avg
+  sensor: sensor_soil_40cm
+  location: location_soil_40cm
+  variable: variable_soil_temperature_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_50cm_soil_temperature_avg
+  sensor: sensor_soil_50cm
+  location: location_soil_50cm
+  variable: variable_soil_temperature_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_60cm_soil_temperature_avg
+  sensor: sensor_soil_60cm
+  location: location_soil_60cm
+  variable: variable_soil_temperature_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_75cm_soil_temperature_avg
+  sensor: sensor_soil_75cm
+  location: location_soil_75cm
+  variable: variable_soil_temperature_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_100cm_soil_temperature_avg
+  sensor: sensor_soil_100cm
+  location: location_soil_100cm
+  variable: variable_soil_temperature_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_5cm_vwc_avg
+  sensor: sensor_soil_5cm
+  location: location_soil_5cm
+  variable: variable_vwc_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_10cm_vwc_avg
+  sensor: sensor_soil_10cm
+  location: location_soil_10cm
+  variable: variable_vwc_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_20cm_vwc_avg
+  sensor: sensor_soil_20cm
+  location: location_soil_20cm
+  variable: variable_vwc_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_30cm_vwc_avg
+  sensor: sensor_soil_30cm
+  location: location_soil_30cm
+  variable: variable_vwc_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_40cm_vwc_avg
+  sensor: sensor_soil_40cm
+  location: location_soil_40cm
+  variable: variable_vwc_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_50cm_vwc_avg
+  sensor: sensor_soil_50cm
+  location: location_soil_50cm
+  variable: variable_vwc_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_60cm_vwc_avg
+  sensor: sensor_soil_60cm
+  location: location_soil_60cm
+  variable: variable_vwc_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_75cm_vwc_avg
+  sensor: sensor_soil_75cm
+  location: location_soil_75cm
+  variable: variable_vwc_avg
+  valid_from: '2025-01-01T00:00:00Z'
+- ref: deployment_soil_100cm_vwc_avg
+  sensor: sensor_soil_100cm
+  location: location_soil_100cm
+  variable: variable_vwc_avg
+  valid_from: '2025-01-01T00:00:00Z'
+files:
+- path: .demo/PEL/PEL_Air_Temperature.dat
+  timestamp:
+    timezone: Etc/GMT-1
+    format: '%Y-%m-%d %H:%M:%S'
+  reader:
+    type: csv
+    options:
+      skiprows:
+      - 0
+      - 2
+      - 3
+      na_values:
+      - NAN
+      chunksize: 250
+  interfaces:
+  - deployment: deployment_logger_battery_voltage_min_5min
+    timestamp_column: TIMESTAMP
+    values_column: BattV_Min
+    unit: Volts
+  - deployment: deployment_air_2m_air_temperature_avg
+    timestamp_column: TIMESTAMP
+    values_column: AirTC_2m_Avg
+    unit: Deg C
+  - deployment: deployment_air_5m_air_temperature_avg
+    timestamp_column: TIMESTAMP
+    values_column: AirTC_5m_Avg
+    unit: Deg C
+  - deployment: deployment_air_10m_air_temperature_avg
+    timestamp_column: TIMESTAMP
+    values_column: AirTC_10m_Avg
+    unit: Deg C
+- path: .demo/PEL/PEL_Battery.dat
+  timestamp:
+    timezone: Etc/GMT-1
+    format: '%Y-%m-%d %H:%M:%S'
+  reader:
+    type: csv
+    options:
+      skiprows:
+      - 0
+      - 2
+      - 3
+      na_values:
+      - NAN
+      chunksize: 250
+  interfaces:
+  - deployment: deployment_logger_battery_voltage_min_hourly
+    timestamp_column: TIMESTAMP
+    values_column: BattV_Min
+    unit: Volts
+- path: .demo/PEL/PEL_Bulk_EC.dat
+  timestamp:
+    timezone: Etc/GMT-1
+    format: '%Y-%m-%d %H:%M:%S'
+  reader:
+    type: csv
+    options:
+      skiprows:
+      - 0
+      - 2
+      - 3
+      na_values:
+      - NAN
+      chunksize: 250
+  interfaces:
+  - deployment: deployment_soil_5cm_bulk_ec_avg
+    timestamp_column: TIMESTAMP
+    values_column: BulkEC_5cm_Avg
+    unit: dS/m
+  - deployment: deployment_soil_10cm_bulk_ec_avg
+    timestamp_column: TIMESTAMP
+    values_column: BulkEC_10cm_Avg
+    unit: dS/m
+  - deployment: deployment_soil_20cm_bulk_ec_avg
+    timestamp_column: TIMESTAMP
+    values_column: BulkEC_20cm_Avg
+    unit: dS/m
+  - deployment: deployment_soil_30cm_bulk_ec_avg
+    timestamp_column: TIMESTAMP
+    values_column: BulkEC_30cm_Avg
+    unit: dS/m
+  - deployment: deployment_soil_40cm_bulk_ec_avg
+    timestamp_column: TIMESTAMP
+    values_column: BulkEC_40cm_Avg
+    unit: dS/m
+  - deployment: deployment_soil_50cm_bulk_ec_avg
+    timestamp_column: TIMESTAMP
+    values_column: BulkEC_50cm_Avg
+    unit: dS/m
+  - deployment: deployment_soil_60cm_bulk_ec_avg
+    timestamp_column: TIMESTAMP
+    values_column: BulkEC_60cm_Avg
+    unit: dS/m
+  - deployment: deployment_soil_75cm_bulk_ec_avg
+    timestamp_column: TIMESTAMP
+    values_column: BulkEC_75cm_Avg
+    unit: dS/m
+  - deployment: deployment_soil_100cm_bulk_ec_avg
+    timestamp_column: TIMESTAMP
+    values_column: BulkEC_100cm_Avg
+    unit: dS/m
+- path: .demo/PEL/PEL_Dendrometers.dat
+  timestamp:
+    timezone: Etc/GMT-1
+    format: '%Y-%m-%d %H:%M:%S'
+  reader:
+    type: csv
+    options:
+      skiprows:
+      - 0
+      - 2
+      - 3
+      na_values:
+      - NAN
+      chunksize: 250
+  interfaces:
+  - deployment: deployment_dendro_1_dendro_fullbr_avg
+    timestamp_column: TIMESTAMP
+    values_column: FullBR_Avg(1)
+    unit: mV/V
+  - deployment: deployment_dendro_2_dendro_fullbr_avg
+    timestamp_column: TIMESTAMP
+    values_column: FullBR_Avg(2)
+    unit: mV/V
+  - deployment: deployment_dendro_3_dendro_fullbr_avg
+    timestamp_column: TIMESTAMP
+    values_column: FullBR_Avg(3)
+    unit: mV/V
+  - deployment: deployment_dendro_4_dendro_fullbr_avg
+    timestamp_column: TIMESTAMP
+    values_column: FullBR_Avg(4)
+    unit: mV/V
+  - deployment: deployment_dendro_5_dendro_fullbr_avg
+    timestamp_column: TIMESTAMP
+    values_column: FullBR_Avg(5)
+    unit: mV/V
+- path: .demo/PEL/PEL_Permittivity.dat
+  timestamp:
+    timezone: Etc/GMT-1
+    format: '%Y-%m-%d %H:%M:%S'
+  reader:
+    type: csv
+    options:
+      skiprows:
+      - 0
+      - 2
+      - 3
+      na_values:
+      - NAN
+      chunksize: 250
+  interfaces:
+  - deployment: deployment_soil_5cm_permittivity_avg
+    timestamp_column: TIMESTAMP
+    values_column: Ka_5cm_Avg
+    unit: unitless
+  - deployment: deployment_soil_10cm_permittivity_avg
+    timestamp_column: TIMESTAMP
+    values_column: Ka_10cm_Avg
+    unit: unitless
+  - deployment: deployment_soil_20cm_permittivity_avg
+    timestamp_column: TIMESTAMP
+    values_column: Ka_20cm_Avg
+    unit: unitless
+  - deployment: deployment_soil_30cm_permittivity_avg
+    timestamp_column: TIMESTAMP
+    values_column: Ka_30cm_Avg
+    unit: unitless
+  - deployment: deployment_soil_40cm_permittivity_avg
+    timestamp_column: TIMESTAMP
+    values_column: Ka_40cm_Avg
+    unit: unitless
+  - deployment: deployment_soil_50cm_permittivity_avg
+    timestamp_column: TIMESTAMP
+    values_column: Ka_50cm_Avg
+    unit: unitless
+  - deployment: deployment_soil_60cm_permittivity_avg
+    timestamp_column: TIMESTAMP
+    values_column: Ka_60cm_Avg
+    unit: unitless
+  - deployment: deployment_soil_75cm_permittivity_avg
+    timestamp_column: TIMESTAMP
+    values_column: Ka_75cm_Avg
+    unit: unitless
+  - deployment: deployment_soil_100cm_permittivity_avg
+    timestamp_column: TIMESTAMP
+    values_column: Ka_100cm_Avg
+    unit: unitless
+- path: .demo/PEL/PEL_Relative_Humidity.dat
+  timestamp:
+    timezone: Etc/GMT-1
+    format: '%Y-%m-%d %H:%M:%S'
+  reader:
+    type: csv
+    options:
+      skiprows:
+      - 0
+      - 2
+      - 3
+      na_values:
+      - NAN
+      chunksize: 250
+  interfaces:
+  - deployment: deployment_air_2m_relative_humidity
+    timestamp_column: TIMESTAMP
+    values_column: RH_2m
+    unit: '%'
+  - deployment: deployment_air_5m_relative_humidity
+    timestamp_column: TIMESTAMP
+    values_column: RH_5m
+    unit: '%'
+  - deployment: deployment_air_10m_relative_humidity
+    timestamp_column: TIMESTAMP
+    values_column: RH_10m
+    unit: '%'
+- path: .demo/PEL/PEL_Soil_Temp.dat
+  timestamp:
+    timezone: Etc/GMT-1
+    format: '%Y-%m-%d %H:%M:%S'
+  reader:
+    type: csv
+    options:
+      skiprows:
+      - 0
+      - 2
+      - 3
+      na_values:
+      - NAN
+      chunksize: 250
+  interfaces:
+  - deployment: deployment_soil_5cm_soil_temperature_avg
+    timestamp_column: TIMESTAMP
+    values_column: T_5cm_Avg
+    unit: Deg C
+  - deployment: deployment_soil_10cm_soil_temperature_avg
+    timestamp_column: TIMESTAMP
+    values_column: T_10cm_Avg
+    unit: Deg C
+  - deployment: deployment_soil_20cm_soil_temperature_avg
+    timestamp_column: TIMESTAMP
+    values_column: T_20cm_Avg
+    unit: Deg C
+  - deployment: deployment_soil_30cm_soil_temperature_avg
+    timestamp_column: TIMESTAMP
+    values_column: T_30cm_Avg
+    unit: Deg C
+  - deployment: deployment_soil_40cm_soil_temperature_avg
+    timestamp_column: TIMESTAMP
+    values_column: T_40cm_Avg
+    unit: Deg C
+  - deployment: deployment_soil_50cm_soil_temperature_avg
+    timestamp_column: TIMESTAMP
+    values_column: T_50cm_Avg
+    unit: Deg C
+  - deployment: deployment_soil_60cm_soil_temperature_avg
+    timestamp_column: TIMESTAMP
+    values_column: T_60cm_Avg
+    unit: Deg C
+  - deployment: deployment_soil_75cm_soil_temperature_avg
+    timestamp_column: TIMESTAMP
+    values_column: T_75cm_Avg
+    unit: Deg C
+  - deployment: deployment_soil_100cm_soil_temperature_avg
+    timestamp_column: TIMESTAMP
+    values_column: T_100cm_Avg
+    unit: Deg C
+- path: .demo/PEL/PEL_VWC.dat
+  timestamp:
+    timezone: Etc/GMT-1
+    format: '%Y-%m-%d %H:%M:%S'
+  reader:
+    type: csv
+    options:
+      skiprows:
+      - 0
+      - 2
+      - 3
+      na_values:
+      - NAN
+      chunksize: 250
+  interfaces:
+  - deployment: deployment_soil_5cm_vwc_avg
+    timestamp_column: TIMESTAMP
+    values_column: VWC_5cm_Avg
+    unit: m^3/m^3
+  - deployment: deployment_soil_10cm_vwc_avg
+    timestamp_column: TIMESTAMP
+    values_column: VWC_10cm_Avg
+    unit: m^3/m^3
+  - deployment: deployment_soil_20cm_vwc_avg
+    timestamp_column: TIMESTAMP
+    values_column: VWC_20cm_Avg
+    unit: m^3/m^3
+  - deployment: deployment_soil_30cm_vwc_avg
+    timestamp_column: TIMESTAMP
+    values_column: VWC_30cm_Avg
+    unit: m^3/m^3
+  - deployment: deployment_soil_40cm_vwc_avg
+    timestamp_column: TIMESTAMP
+    values_column: VWC_40cm_Avg
+    unit: m^3/m^3
+  - deployment: deployment_soil_50cm_vwc_avg
+    timestamp_column: TIMESTAMP
+    values_column: VWC_50cm_Avg
+    unit: m^3/m^3
+  - deployment: deployment_soil_60cm_vwc_avg
+    timestamp_column: TIMESTAMP
+    values_column: VWC_60cm_Avg
+    unit: m^3/m^3
+  - deployment: deployment_soil_75cm_vwc_avg
+    timestamp_column: TIMESTAMP
+    values_column: VWC_75cm_Avg
+    unit: m^3/m^3
+  - deployment: deployment_soil_100cm_vwc_avg
+    timestamp_column: TIMESTAMP
+    values_column: VWC_100cm_Avg
+    unit: m^3/m^3
