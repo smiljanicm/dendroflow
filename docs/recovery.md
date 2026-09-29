@@ -91,6 +91,24 @@ reviewing the drill evidence.
 - Record the backup identifiers, restore target, version, checks, and any
   limitation in the drill result. Clean up only the disposable targets.
 
+Run the opt-in MVP3b drill with Docker and the `postgres:16` image available:
+
+```bash
+DENDROFLOW_INTEGRATION=1 DENDROFLOW_RECOVERY_DRILL=1 \
+  pytest -q tests/integration/test_recovery_drill.py
+```
+
+The drill starts two disposable PostgreSQL containers with unique names and
+random host ports. It migrates and populates the first, dumps all three
+databases with `pg_dump`, stops it, restores into the second with `pg_restore`,
+and copies back the archived source, configuration, and staged snapshot. It
+checks IDs, relationships, migration history, RAW provenance, and CLEAN data;
+then it reruns migrations and ingestion, including one new appended source row.
+The test never connects to the existing Compose databases. It removes the
+temporary containers in cleanup, including on assertion failure. The extra
+`DENDROFLOW_RECOVERY_DRILL=1` flag keeps this Docker drill out of ordinary
+integration runs.
+
 These checks establish recoverability for the tested backup set and release.
 They do not establish a backup schedule, retention policy, recovery time
 objective, or recovery point objective for a particular lab deployment.
