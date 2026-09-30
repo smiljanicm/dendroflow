@@ -62,6 +62,7 @@ class IngestionProgressEvent:
 
     file_id: int
     phase: str
+    filepath: str | None = None
     batch_number: int | None = None
     source_rows_examined: int = 0
     observations_inserted: int = 0
@@ -213,6 +214,12 @@ def _ingest_file(
     if progress is not None:
         progress.filepath = str(source_file.filepath)
         progress.resumed = False
+    if on_progress is not None:
+        on_progress(IngestionProgressEvent(
+            file_id=file_id,
+            phase="source_loaded",
+            filepath=str(source_file.filepath),
+        ))
     interfaces = get_source_interfaces(file_id)
 
     if not interfaces:

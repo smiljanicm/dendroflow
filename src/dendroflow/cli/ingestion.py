@@ -69,7 +69,13 @@ class _ProgressDisplay:
             )
 
     def __call__(self, event: IngestionProgressEvent) -> None:
-        if event.phase == "snapshot":
+        if event.phase == "source_loaded" and event.filepath is not None:
+            print(
+                f"File {self.file_id}: filepath: {event.filepath}",
+                file=sys.stderr,
+                flush=True,
+            )
+        elif event.phase == "snapshot":
             print(
                 f"File {self.file_id}: preparing stable source snapshot...",
                 file=sys.stderr,

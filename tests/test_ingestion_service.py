@@ -320,8 +320,9 @@ def test_ingest_file(monkeypatch, tmp_path):
     assert report.counts.source_rows_examined == 1
     assert report.counts.observations_inserted == 1
     assert [event.phase for event in events] == [
-        "snapshot", "snapshot_ready", "batch_completed",
+        "source_loaded", "snapshot", "snapshot_ready", "batch_completed",
     ]
+    assert events[0].filepath == str(source_file.filepath)
     assert events[-1].batch_number == 1
     assert events[-1].source_rows_examined == 1
     assert events[-1].observations_inserted == 1

@@ -132,6 +132,11 @@ def test_ingest_json_progress_keeps_stdout_machine_readable(
     capsys,
 ):
     def fake_ingest(file_id, *, max_attempts, on_progress):
+        on_progress(IngestionProgressEvent(
+            file_id=file_id,
+            phase="source_loaded",
+            filepath=f"/data/{file_id}.csv",
+        ))
         on_progress(IngestionProgressEvent(file_id=file_id, phase="snapshot"))
         on_progress(IngestionProgressEvent(
             file_id=file_id,
@@ -151,6 +156,7 @@ def test_ingest_json_progress_keeps_stdout_machine_readable(
     output = capsys.readouterr()
     document = json.loads(output.out)
     assert document["files"][0]["file_id"] == 1
+    assert "File 1: filepath: /data/1.csv" in output.err
     assert "batch 1; rows examined=250" in output.err
 
 
