@@ -40,6 +40,25 @@ This command writes RAW data by design. It has no preview or confirmation
 prompt; the selected IDs (or `--all`) are the operator's explicit request to
 ingest.
 
+## Live progress
+
+Human-readable ingestion writes a start message, snapshot status, and periodic
+batch counts to standard error while it works. A heartbeat appears about every
+15 seconds even while an individual batch is still running. These messages
+are transient activity reports, not committed checkpoints; only the final
+result and database state establish the outcome.
+
+JSON mode remains silent by default and writes one complete report to standard
+output after processing. To see progress in a terminal while retaining clean
+JSON on standard output, request it explicitly:
+
+```bash
+dendroflow ingest --file-id 12 --json --progress > report.json
+```
+
+Progress goes to standard error. A script that needs no terminal messages
+can omit `--progress` in JSON mode.
+
 ## Scope and operational boundary
 
 The CLI ingests files that are already registered in DendroFlow. The
@@ -160,7 +179,8 @@ Use `--json` when a script needs to read the results:
 dendroflow ingest --all --json
 ```
 
-JSON writes exactly one JSON object to standard output and no progress text.
+JSON writes exactly one JSON object to standard output. Progress text appears
+only on standard error when `--progress` is requested.
 The object has a `schema_version` of `1`, the `target_environment`, a `summary`
 with counts for each outcome, and a `files` array with one result per selected
 file. A result contains `file_id`, `filepath`, `outcome`, `ingestion_run_id`,

@@ -10,6 +10,7 @@ from dendroflow.ingestion.models import (
     IngestionError,
     IngestionFileResult,
 )
+from dendroflow.ingestion.service import IngestionProgressEvent
 
 
 def _result(
@@ -60,6 +61,7 @@ def test_ingest_help_documents_selection_modes(capsys):
     assert "--all" in output
     assert "--max-attempts N" in output
     assert "--json" in output
+    assert "--progress" in output
 
 
 @pytest.mark.parametrize(
@@ -90,8 +92,15 @@ def test_ingest_deduplicates_and_sorts_ids_before_processing(
 ):
     called = []
 
-    def fake_ingest(file_id, *, max_attempts):
+    def fake_ingest(file_id, *, max_attempts, on_progress):
         called.append((file_id, max_attempts))
+        on_progress(IngestionProgressEvent(
+            file_id=file_id,
+            phase="batch_completed",
+            batch_number=1,
+            source_rows_examined=2,
+            observations_inserted=2,
+        ))
         return _result(file_id)
 
     monkeypatch.setattr(
@@ -113,7 +122,36 @@ def test_ingest_deduplicates_and_sorts_ids_before_processing(
     assert "File 1: completed" in output.out
     assert "File 3: completed" in output.out
     assert "selected=2, completed=2" in output.out
-    assert output.err == ""
+    assert "File 1: starting ingestion" in output.err
+    assert "File 3: batch 1; rows examined=2" in output.err
+
+
+def test_ingest_json_progress_keeps_stdout_machine_readable(
+    cli_target,
+    monkeypatch,
+    capsys,
+):
+    def fake_ingest(file_id, *, max_attempts, on_progress):
+        on_progress(IngestionProgressEvent(file_id=file_id, phase="snapshot"))
+        on_progress(IngestionProgressEvent(
+            file_id=file_id,
+            phase="batch_completed",
+            batch_number=1,
+            source_rows_examined=250,
+            observations_inserted=250,
+        ))
+        return _result(file_id)
+
+    monkeypatch.setattr(
+        "dendroflow.cli.ingestion.ingest_file_with_report",
+        fake_ingest,
+    )
+
+    assert main(["ingest", "--file-id", "1", "--json", "--progress"]) == 0
+    output = capsys.readouterr()
+    document = json.loads(output.out)
+    assert document["files"][0]["file_id"] == 1
+    assert "batch 1; rows examined=250" in output.err
 
 
 def test_ingest_rejects_unknown_ids_before_ingestion(

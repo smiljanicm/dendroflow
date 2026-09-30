@@ -21,7 +21,60 @@ alone does not isolate Docker resources. The steps assume an empty quickstart
 volume; do not use `ingest --all` against a database containing other
 registered files.
 
-## 1. Clone, install, and start PostgreSQL
+## 1. Prepare a fresh Ubuntu VM
+
+On Ubuntu Desktop or Server, install the basic tools:
+
+```bash
+sudo apt update
+sudo apt install -y git python3 python3-venv python3-pip ca-certificates curl
+```
+
+Install Docker Engine and the Compose plugin from Docker's official Ubuntu
+repository. Follow the [current Docker installation guide](https://docs.docker.com/engine/install/ubuntu/)
+if Ubuntu reports conflicting preinstalled Docker packages:
+
+```bash
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+  -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+sudo tee /etc/apt/sources.list.d/docker.sources >/dev/null <<EOF
+Types: deb
+URIs: https://download.docker.com/linux/ubuntu
+Suites: $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
+Components: stable
+Architectures: $(dpkg --print-architecture)
+Signed-By: /etc/apt/keyrings/docker.asc
+EOF
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io \
+  docker-buildx-plugin docker-compose-plugin
+```
+
+Allow your VM account to use Docker, then **log out of the desktop session and
+log back in**. A VM restart is also fine. Opening another terminal alone does
+not refresh your session's groups:
+
+```bash
+sudo groupadd --force docker
+sudo usermod -aG docker "$USER"
+```
+
+After signing in again, confirm that `id -nG` includes `docker` and that the
+daemon and Compose are accessible:
+
+```bash
+id -nG
+docker info
+docker compose version
+```
+
+The `docker` group grants root-level access to the VM. See Docker's
+[post-installation guidance](https://docs.docker.com/engine/install/linux-postinstall/)
+for this permission model.
+
+## 2. Clone, install, and start PostgreSQL
 
 Run these from a shell on the host:
 
@@ -36,26 +89,41 @@ cp .env.example .env
 
 Edit this clone's `.env`: replace `POSTGRES_PASSWORD=change-me` with a
 password for this local instance, and set `POSTGRES_PORT=55432` (choose another
-unused port if necessary). `.env` is not committed to Git. Start the dedicated
-quickstart database from the clone root:
+unused port if necessary). `.env` is not committed to Git. If you exported
+`POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, or `POSTGRES_PASSWORD` in
+this terminal, unset them now so they do not override the clone's `.env` for
+the CLI. Start the dedicated quickstart database from the clone root:
 
 ```bash
 docker compose --env-file .env -f examples/quickstart/compose.yaml \
-  -p dendroflow-quickstart up -d postgres
+  -p dendroflow-quickstart up --wait --wait-timeout 120 -d postgres
 docker compose --env-file .env -f examples/quickstart/compose.yaml \
   -p dendroflow-quickstart ps postgres
+```
+
+Wait for Compose to report the service as healthy. The quickstart healthcheck
+uses a TCP connection inside the container, so it waits for the final PostgreSQL
+server rather than the temporary server used during first-time initialization.
+Then migrate in a separate command:
+
+```bash
 dendroflow migrate
 ```
 
-Wait until the PostgreSQL service is healthy before migrating. The migration
-command should apply versions to METADATA, RAW, and CLEAN; a second invocation
-should report `No pending migrations` for all three. If the Docker volume
-already contains databases, this is not a fresh-clone acceptance run. Your
-host CLI reads this clone's `.env`; if you have exported `POSTGRES_HOST`,
-`POSTGRES_PORT`, `POSTGRES_USER`, or `POSTGRES_PASSWORD` in this terminal,
-unset them first so they cannot override the quickstart connection settings.
+The migration command should apply versions to METADATA, RAW, and CLEAN; a
+second invocation should report `No pending migrations` for all three. If a
+first migration still fails, inspect its actual error and the database logs
+before retrying:
 
-## 2. Prepare the example source and snapshots
+```bash
+docker compose --env-file .env -f examples/quickstart/compose.yaml \
+  -p dendroflow-quickstart logs postgres
+```
+
+If the Docker volume already contains databases, this is not a fresh-clone
+acceptance run. The host CLI reads this clone's `.env`.
+
+## 3. Prepare the example source and snapshots
 
 Keep the shell in the repository root. The example CONFIG file uses the
 relative path `.demo/logger.csv`; running later commands from another working
@@ -73,7 +141,7 @@ The first discovery should show `logger.csv` as `unregistered`. Its exit code
 is `1` because it found a file needing configuration; that is the intended
 result at this step. Discovery reads paths only and does not register the file.
 
-## 3. Review and apply configuration
+## 4. Review and apply configuration
 
 Read `examples/quickstart/config.yaml`. It defines a site, one location and
 sensor, a variable, a deployment, and one interface mapping the CSV `value`
@@ -91,18 +159,18 @@ Review the plan before applying. The second discovery should classify the
 file as `registered` and show its file ID. CONFIG registers the source and its
 meaning but does not ingest measurements.
 
-## 4. Ingest, replay, and append
+## 5. Ingest, replay, and append
 
 On this clean example database, `--all` selects just the one registered file:
 
 ```bash
-dendroflow ingest --all --json
-dendroflow ingest --all --json
+dendroflow ingest --all --json --progress
+dendroflow ingest --all --json --progress
 cat >> .demo/logger.csv <<'CSV'
 2026-01-02 00:30:00,10.2
 CSV
-dendroflow ingest --all --json
-dendroflow ingest --all --json
+dendroflow ingest --all --json --progress
+dendroflow ingest --all --json --progress
 ```
 
 Expected outcomes in order:
@@ -117,9 +185,11 @@ Expected outcomes in order:
 The appended physical record must end with a newline. DendroFlow captures a
 stable snapshot of the **whole** file each time; it does not copy only the new
 bytes. It normally waits for the source to remain stable for one second.
-Inspect the JSON run ID, file-version ID, snapshot hash, and counts after each
-invocation. A new complete row produces a new version and run; older matching
-rows are counted as unchanged in that invocation.
+Progress appears on standard error while the command is working; the JSON
+result remains on standard output. Inspect the JSON run ID, file-version ID,
+snapshot hash, and counts after each invocation. A new complete row produces
+a new version and run; older matching rows are counted as unchanged in that
+invocation.
 
 ## Next step and limits
 

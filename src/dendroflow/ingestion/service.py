@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import psycopg
@@ -53,6 +54,18 @@ from .writer import write_ingestion_batch, write_ingestion_batch_with_counts
 
 class IngestionRetryLimitError(RuntimeError):
     """Raised when a batch has exhausted its configured attempts."""
+
+
+@dataclass(frozen=True)
+class IngestionProgressEvent:
+    """Transient progress for one file; not an ingestion checkpoint."""
+
+    file_id: int
+    phase: str
+    batch_number: int | None = None
+    source_rows_examined: int = 0
+    observations_inserted: int = 0
+    observations_unchanged: int = 0
 
 
 @dataclass
@@ -157,6 +170,7 @@ def ingest_file_with_report(
     file_id: int,
     *,
     max_attempts: int = 3,
+    on_progress: Callable[[IngestionProgressEvent], None] | None = None,
 ) -> IngestionFileResult:
     """Ingest one file and report the outcome and work from this invocation."""
 
@@ -170,6 +184,7 @@ def ingest_file_with_report(
                 file_id,
                 max_attempts=max_attempts,
                 progress=progress,
+                on_progress=on_progress,
             )
     except Exception as error: # noqa: BLE001
         # Convert unexpected failures into structured report results.
@@ -190,6 +205,7 @@ def _ingest_file(
     *,
     max_attempts: int,
     progress: _IngestionProgress | None = None,
+    on_progress: Callable[[IngestionProgressEvent], None] | None = None,
 ) -> IngestionRun:
     """Run ingestion while the caller holds the file lock."""
 
@@ -203,6 +219,9 @@ def _ingest_file(
         raise NoSourceInterfacesError(
             f"No source interfaces registered for file_id={file_id}"
         )
+
+    if on_progress is not None:
+        on_progress(IngestionProgressEvent(file_id=file_id, phase="snapshot"))
 
     interface_ids = tuple(
         interface.interface_id
@@ -262,6 +281,9 @@ def _ingest_file(
     if progress is not None:
         progress.file_version_id = file_version.file_version_id
         progress.snapshot_hash = file_version.file_hash
+
+    if on_progress is not None:
+        on_progress(IngestionProgressEvent(file_id=file_id, phase="snapshot_ready"))
 
     if resumable_run is None:
         completed_run = get_completed_ingestion_run(
@@ -360,6 +382,15 @@ def _ingest_file(
                 if ingestion_batch.status == "completed":
                     if progress is not None:
                         progress.current_batch_number = None
+                    if on_progress is not None:
+                        on_progress(IngestionProgressEvent(
+                            file_id=file_id,
+                            phase="batch_reused",
+                            batch_number=batch_number,
+                            source_rows_examined=(
+                                progress.source_rows_examined if progress else 0
+                            ),
+                        ))
                     continue
 
                 if ingestion_batch.status == "running":
@@ -413,6 +444,16 @@ def _ingest_file(
 
                     if progress is not None:
                         progress.current_batch_number = None
+
+                    if on_progress is not None and progress is not None:
+                        on_progress(IngestionProgressEvent(
+                            file_id=file_id,
+                            phase="batch_completed",
+                            batch_number=batch_number,
+                            source_rows_examined=progress.source_rows_examined,
+                            observations_inserted=progress.observations_inserted,
+                            observations_unchanged=progress.observations_unchanged,
+                        ))
 
                     break
 

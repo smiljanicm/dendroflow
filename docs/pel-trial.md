@@ -118,10 +118,13 @@ PY
 ## 3. Ingest the Battery copy, replay, then append
 
 Use the `file_id` printed for `PEL_Battery.dat` in place of `BATTERY_ID`:
+Enable `pipefail` so that `tee` does not hide a failed ingestion exit code.
+Progress prints to the terminal on standard error while JSON is saved.
 
 ```bash
-dendroflow ingest --file-id BATTERY_ID --json | tee .demo/pel-battery-first.json
-dendroflow ingest --file-id BATTERY_ID --json | tee .demo/pel-battery-replay.json
+set -o pipefail
+dendroflow ingest --file-id BATTERY_ID --json --progress | tee .demo/pel-battery-first.json
+dendroflow ingest --file-id BATTERY_ID --json --progress | tee .demo/pel-battery-replay.json
 ```
 
 The first result should be `completed`, with 8,496 source rows and 8,496
@@ -133,8 +136,8 @@ the VM copy only**:
 ```bash
 printf '"2026-09-29 16:00:00",19418,12.57,"2026-09-29 15:20:00"\n' \
   >> .demo/PEL/PEL_Battery.dat
-dendroflow ingest --file-id BATTERY_ID --json | tee .demo/pel-battery-append.json
-dendroflow ingest --file-id BATTERY_ID --json | tee .demo/pel-battery-final-replay.json
+dendroflow ingest --file-id BATTERY_ID --json --progress | tee .demo/pel-battery-append.json
+dendroflow ingest --file-id BATTERY_ID --json --progress | tee .demo/pel-battery-final-replay.json
 ```
 
 The append run should report a new snapshot/version and one inserted
@@ -151,7 +154,7 @@ quickstart example is also registered in the same database, and a failed
 large file should not obscure the smaller-file result.
 
 ```bash
-dendroflow ingest --file-id FILE_ID --json | tee .demo/pel-one-file.json
+dendroflow ingest --file-id FILE_ID --json --progress | tee .demo/pel-one-file.json
 ```
 
 The selected files are large enough for this to take substantial time on a

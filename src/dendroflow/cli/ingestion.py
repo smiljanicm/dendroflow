@@ -3,6 +3,10 @@
 import argparse
 import json
 import sys
+import threading
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict
 
 import psycopg
@@ -10,7 +14,10 @@ import psycopg
 from dendroflow.config import get_database_target
 from dendroflow.database import use_database_target
 from dendroflow.ingestion.models import IngestionFileResult
-from dendroflow.ingestion.service import ingest_file_with_report
+from dendroflow.ingestion.service import (
+    IngestionProgressEvent,
+    ingest_file_with_report,
+)
 from dendroflow.ingestion.sources import get_source_file_ids
 
 OUTCOMES = (
@@ -20,6 +27,80 @@ OUTCOMES = (
     "needs_configuration",
     "failed",
 )
+
+_HEARTBEAT_SECONDS = 15
+_BATCH_REPORT_SECONDS = 10
+
+
+class _ProgressDisplay:
+    """Show live activity without mixing it into result stdout."""
+
+    def __init__(self, file_id: int) -> None:
+        self.file_id = file_id
+        self.started_at = time.monotonic()
+        self.last_report_at = self.started_at
+        self.last_batch: int | None = None
+        self.last_rows = 0
+        self.stop = threading.Event()
+        self.thread = threading.Thread(target=self._heartbeat, daemon=True)
+
+    @contextmanager
+    def running(self) -> Iterator[None]:
+        print(f"File {self.file_id}: starting ingestion...", file=sys.stderr, flush=True)
+        self.thread.start()
+        try:
+            yield
+        finally:
+            self.stop.set()
+            self.thread.join()
+
+    def _heartbeat(self) -> None:
+        while not self.stop.wait(_HEARTBEAT_SECONDS):
+            elapsed = int(time.monotonic() - self.started_at)
+            detail = (
+                "preparing source"
+                if self.last_batch is None
+                else f"last processed batch={self.last_batch}, rows examined={self.last_rows}"
+            )
+            print(
+                f"File {self.file_id}: working ({elapsed}s elapsed; {detail})",
+                file=sys.stderr,
+                flush=True,
+            )
+
+    def __call__(self, event: IngestionProgressEvent) -> None:
+        if event.phase == "snapshot":
+            print(
+                f"File {self.file_id}: preparing stable source snapshot...",
+                file=sys.stderr,
+                flush=True,
+            )
+        elif event.phase == "snapshot_ready":
+            print(
+                f"File {self.file_id}: snapshot ready; checking ingestion state...",
+                file=sys.stderr,
+                flush=True,
+            )
+        elif event.phase in {"batch_completed", "batch_reused"}:
+            self.last_batch = event.batch_number
+            self.last_rows = event.source_rows_examined
+            now = time.monotonic()
+            if (
+                event.batch_number == 1
+                or now - self.last_report_at >= _BATCH_REPORT_SECONDS
+            ):
+                label = (
+                    "reused batch" if event.phase == "batch_reused" else "batch"
+                )
+                print(
+                    f"File {self.file_id}: {label} {event.batch_number}; "
+                    f"rows examined={event.source_rows_examined}; "
+                    f"inserted={event.observations_inserted}, "
+                    f"unchanged={event.observations_unchanged}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                self.last_report_at = now
 
 
 def positive_integer(value: str) -> int:
@@ -154,12 +235,23 @@ def ingest(args: argparse.Namespace) -> int:
     try:
         with use_database_target(target):
             for file_id in file_ids:
-                results.append(
-                    ingest_file_with_report(
-                        file_id,
-                        max_attempts=args.max_attempts,
-                    )
+                display = (
+                    _ProgressDisplay(file_id)
+                    if args.progress or not args.json
+                    else None
                 )
+                with display.running() if display is not None else nullcontext():
+                    if display is None:
+                        result = ingest_file_with_report(
+                            file_id, max_attempts=args.max_attempts,
+                        )
+                    else:
+                        result = ingest_file_with_report(
+                            file_id,
+                            max_attempts=args.max_attempts,
+                            on_progress=display,
+                        )
+                    results.append(result)
     except KeyboardInterrupt:
         print("Ingestion interrupted.", file=sys.stderr)
         return 130

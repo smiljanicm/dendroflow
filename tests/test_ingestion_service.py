@@ -307,7 +307,8 @@ def test_ingest_file(monkeypatch, tmp_path):
             ),
         ),
     )
-    report = ingest_file_with_report(1)
+    events = []
+    report = ingest_file_with_report(1, on_progress=events.append)
 
     assert report.file_id == 1
     assert report.filepath == str(source_file.filepath)
@@ -318,6 +319,12 @@ def test_ingest_file(monkeypatch, tmp_path):
     assert report.resumed is False
     assert report.counts.source_rows_examined == 1
     assert report.counts.observations_inserted == 1
+    assert [event.phase for event in events] == [
+        "snapshot", "snapshot_ready", "batch_completed",
+    ]
+    assert events[-1].batch_number == 1
+    assert events[-1].source_rows_examined == 1
+    assert events[-1].observations_inserted == 1
     assert report.counts.observations_unchanged == 0
     assert report.counts.repeated_identity_rows == 0
     assert report.counts.deferred_trailing_bytes is None

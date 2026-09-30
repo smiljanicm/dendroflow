@@ -88,6 +88,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Write one machine-readable JSON report to standard output.",
     )
+    ingestion_parser.add_argument(
+        "--progress",
+        action="store_true",
+        help="Show live progress on standard error (also with --json).",
+    )
     ingestion_parser.set_defaults(handler=ingestion_cli.ingest)
 
     discovery_parser = commands.add_parser(
