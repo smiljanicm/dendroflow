@@ -35,6 +35,15 @@ services:
     # The image's default command is `dendroflow migrate`.
     restart: "no"
 
+  prepare_snapshots:
+    image: alpine:3.20
+    user: "0:0"
+    entrypoint: ["sh", "-c"]
+    command: ["chown ${DENDROFLOW_CLI_UID:?Set DENDROFLOW_CLI_UID in .env}:${DENDROFLOW_CLI_GID:?Set DENDROFLOW_CLI_GID in .env} \"${DENDROFLOW_SNAPSHOT_CONTAINER_PATH:?Set DENDROFLOW_SNAPSHOT_CONTAINER_PATH in .env}\""]
+    volumes:
+      - dendroflow_snapshots:${DENDROFLOW_SNAPSHOT_CONTAINER_PATH:?Set DENDROFLOW_SNAPSHOT_CONTAINER_PATH in .env}
+    restart: "no"
+
   cli:
     profiles: [tools]
     build:
@@ -42,8 +51,11 @@ services:
       dockerfile: docker/app/Dockerfile
     entrypoint: ["dendroflow"]
     working_dir: /work
+    user: "${DENDROFLOW_CLI_UID:?Set DENDROFLOW_CLI_UID in .env}:${DENDROFLOW_CLI_GID:?Set DENDROFLOW_CLI_GID in .env}"
     depends_on:
       migrate:
+        condition: service_completed_successfully
+      prepare_snapshots:
         condition: service_completed_successfully
     environment:
       POSTGRES_HOST: postgres
