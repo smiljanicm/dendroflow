@@ -1,41 +1,72 @@
+name: dendroflow-lab
+
 services:
   postgres:
     image: postgres:16
-    container_name: dendroflow-postgres
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_USER: ${POSTGRES_USER:-dendroflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: postgres
     ports:
-      - "${POSTGRES_PORT}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./docker/postgres/init:/docker-entrypoint-initdb.d
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d postgres"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ${POSTGRES_USER:-dendroflow} -d postgres"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      start_period: 30s
+      retries: 12
+    restart: unless-stopped
 
-  dendroflow:
+  migrate:
     build:
       context: .
       dockerfile: docker/app/Dockerfile
-    container_name: dendroflow-app
     depends_on:
       postgres:
         condition: service_healthy
     environment:
       POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      DENDROFLOW_SNAPSHOT_DIR: /var/lib/dendroflow/snapshots
-      DENDROFLOW_FILE_SETTLE_SECONDS: ${DENDROFLOW_FILE_SETTLE_SECONDS:-1}
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-dendroflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    # The image's default command is `dendroflow migrate`.
     restart: "no"
+
+  cli:
+    profiles: [tools]
+    build:
+      context: .
+      dockerfile: docker/app/Dockerfile
+    entrypoint: ["dendroflow"]
+    working_dir: /work
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-dendroflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      DENDROFLOW_ENVIRONMENT: ${DENDROFLOW_ENVIRONMENT:-local}
+      DENDROFLOW_SNAPSHOT_DIR: ${DENDROFLOW_SNAPSHOT_CONTAINER_PATH:?Set DENDROFLOW_SNAPSHOT_CONTAINER_PATH in .env}
+      DENDROFLOW_FILE_SETTLE_SECONDS: ${DENDROFLOW_FILE_SETTLE_SECONDS:-1}
     volumes:
-      - dendroflow_snapshots:/var/lib/dendroflow/snapshots
+      - ./:/work
+      - type: volume
+        source: dendroflow_snapshots
+        target: ${DENDROFLOW_SNAPSHOT_CONTAINER_PATH:?Set DENDROFLOW_SNAPSHOT_CONTAINER_PATH in .env}
+      # Register source paths using the container path configured below.
+      - type: bind
+        source: ${DENDROFLOW_NAS_HOST_PATH:?Set DENDROFLOW_NAS_HOST_PATH in .env}
+        target: ${DENDROFLOW_NAS_CONTAINER_PATH:?Set DENDROFLOW_NAS_CONTAINER_PATH in .env}
+        read_only: true
+        bind:
+          create_host_path: false
 
 volumes:
   postgres_data:
   dendroflow_snapshots:
+    name: ${DENDROFLOW_SNAPSHOT_VOLUME_NAME:?Set DENDROFLOW_SNAPSHOT_VOLUME_NAME in .env}
