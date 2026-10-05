@@ -622,7 +622,7 @@ updates:
                 database_id=42,
                 values={
                     "sensor_id": 11,
-                    "location_id": 22,
+                    "location_id": 21,
                     "variable_id": 31,
                     "valid_from": datetime(
                         2025,
@@ -1175,4 +1175,3 @@ deployments:
         resource_type="sensor",
         plan_id="sensors[0]",
     )
-

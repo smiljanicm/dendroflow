@@ -32,6 +32,7 @@ def _deployment_state(
         for change in item.changes
         if change.field in {
             "sensor",
+            "location",
             "variable",
             "valid_from",
             "valid_to",
@@ -45,7 +46,11 @@ def _deployment_states_overlap(
     first: ResolvedDeploymentValues,
     second: ResolvedDeploymentValues,
 ) -> bool:
-    if first.sensor != second.sensor or first.variable != second.variable:
+    if (
+        first.sensor != second.sensor
+        or first.location != second.location
+        or first.variable != second.variable
+    ):
         return False
 
     return (

@@ -458,7 +458,7 @@ def test_overlapping_deployment_creates_conflict():
     )
     second = _deployment_create_item(
         "deployments[1]",
-        location_id=22,
+        location_id=21,
         valid_from=datetime(
             2025, 2, 1, tzinfo=timezone.utc
         ),
@@ -479,6 +479,25 @@ def test_overlapping_deployment_creates_conflict():
     assert errors[0].source_path == "deployments[1]"
 
 
+def test_one_sensor_measures_same_variable_at_two_locations():
+    first = _deployment_create_item(
+        "deployments[0]",
+        location_id=21,
+        valid_from=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        valid_to=None,
+    )
+    second = _deployment_create_item(
+        "deployments[1]",
+        location_id=22,
+        valid_from=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        valid_to=None,
+    )
+
+    assert collect_plan_consistency_errors(
+        ResolvedPlan(metadata_items=(first, second))
+    ) == ()
+
+
 def test_adjacent_deployment_creates_are_consistent():
     first = _deployment_create_item(
         "deployments[0]",
@@ -491,7 +510,7 @@ def test_adjacent_deployment_creates_are_consistent():
     )
     second = _deployment_create_item(
         "deployments[1]",
-        location_id=22,
+        location_id=21,
         valid_from=datetime(
             2025, 3, 1, tzinfo=timezone.utc
         ),
@@ -550,7 +569,7 @@ def test_open_ended_deployment_create_overlaps_later_create():
     )
     second = _deployment_create_item(
         "deployments[1]",
-        location_id=22,
+        location_id=21,
         valid_from=datetime(
             2025, 6, 1, tzinfo=timezone.utc
         ),
@@ -619,7 +638,7 @@ def _deployment_update_item(
 def test_deployment_create_and_update_overlap_conflict():
     created = _deployment_create_item(
         "deployments[0]",
-        location_id=22,
+        location_id=21,
         valid_from=datetime(
             2025, 3, 1, tzinfo=timezone.utc
         ),
@@ -667,7 +686,7 @@ def test_deployment_create_and_update_adjacent_are_consistent():
     updated = _deployment_update_item(
         "updates.deployments[0]",
         41,
-        location_id=22,
+        location_id=21,
         valid_from=datetime(
             2025, 3, 1, tzinfo=timezone.utc
         ),
@@ -700,7 +719,7 @@ def test_deployment_updates_with_overlapping_final_intervals_conflict():
     second = _deployment_update_item(
         "updates.deployments[1]",
         42,
-        location_id=22,
+        location_id=21,
         valid_from=datetime(
             2025, 2, 1, tzinfo=timezone.utc
         ),
@@ -738,7 +757,7 @@ def test_deployment_updates_with_adjacent_final_intervals_are_consistent():
     second = _deployment_update_item(
         "updates.deployments[1]",
         42,
-        location_id=22,
+        location_id=21,
         valid_from=datetime(
             2025, 3, 1, tzinfo=timezone.utc
         ),
@@ -759,7 +778,7 @@ def test_deployment_updates_with_adjacent_final_intervals_are_consistent():
 def test_deployment_create_overlapping_existing_history_conflicts():
     created = _deployment_create_item(
         "deployments[0]",
-        location_id=22,
+        location_id=21,
         valid_from=datetime(
             2025, 3, 1, tzinfo=timezone.utc
         ),
@@ -771,6 +790,7 @@ def test_deployment_create_overlapping_existing_history_conflicts():
     existing = ExistingDeploymentState(
         deployment_id=41,
         sensor_id=11,
+        location_id=21,
         variable_id=31,
         valid_from=datetime(
             2025, 1, 1, tzinfo=timezone.utc
@@ -798,10 +818,32 @@ def test_deployment_create_overlapping_existing_history_conflicts():
     assert error.source_path == "deployments[0]"
 
 
-def test_deployment_create_adjacent_to_existing_history_is_consistent():
+def test_deployment_existing_history_at_another_location_is_consistent():
     created = _deployment_create_item(
         "deployments[0]",
         location_id=22,
+        valid_from=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        valid_to=None,
+    )
+    existing = ExistingDeploymentState(
+        deployment_id=41,
+        sensor_id=11,
+        location_id=21,
+        variable_id=31,
+        valid_from=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        valid_to=None,
+    )
+
+    assert collect_plan_consistency_errors(
+        ResolvedPlan(metadata_items=(created,)),
+        existing_deployments=(existing,),
+    ) == ()
+
+
+def test_deployment_create_adjacent_to_existing_history_is_consistent():
+    created = _deployment_create_item(
+        "deployments[0]",
+        location_id=21,
         valid_from=datetime(
             2025, 4, 1, tzinfo=timezone.utc
         ),
@@ -813,6 +855,7 @@ def test_deployment_create_adjacent_to_existing_history_is_consistent():
     existing = ExistingDeploymentState(
         deployment_id=41,
         sensor_id=11,
+        location_id=21,
         variable_id=31,
         valid_from=datetime(
             2025, 1, 1, tzinfo=timezone.utc
@@ -849,6 +892,7 @@ def test_deployment_update_overlapping_other_existing_history_conflicts():
     existing = ExistingDeploymentState(
         deployment_id=42,
         sensor_id=11,
+        location_id=21,
         variable_id=31,
         valid_from=datetime(
             2025, 1, 1, tzinfo=timezone.utc
@@ -890,6 +934,7 @@ def test_deployment_update_ignores_own_existing_history():
     existing = ExistingDeploymentState(
         deployment_id=41,
         sensor_id=11,
+        location_id=21,
         variable_id=31,
         valid_from=datetime(
             2025, 1, 1, tzinfo=timezone.utc
@@ -925,6 +970,7 @@ def test_deployment_history_with_different_variable_is_consistent():
     existing = ExistingDeploymentState(
         deployment_id=41,
         sensor_id=11,
+        location_id=21,
         variable_id=32,
         valid_from=datetime(
             2025, 1, 1, tzinfo=timezone.utc
@@ -2304,6 +2350,7 @@ def test_deployment_overlap_uses_final_updated_states(
         ExistingDeploymentState(
             deployment_id=41,
             sensor_id=11,
+            location_id=21,
             variable_id=31,
             valid_from=january,
             valid_to=june,
@@ -2315,7 +2362,7 @@ def test_deployment_overlap_uses_final_updated_states(
     if successor_action == PlanAction.CREATE:
         successor = _deployment_create_item(
             "deployments[0]",
-            location_id=22,
+            location_id=21,
             valid_from=successor_start,
             valid_to=None,
         )
@@ -2323,7 +2370,7 @@ def test_deployment_overlap_uses_final_updated_states(
         successor = _deployment_update_item(
             "updates.deployments[1]",
             42,
-            location_id=22,
+            location_id=21,
             valid_from=successor_start,
             valid_to=None,
         )
@@ -2342,6 +2389,7 @@ def test_deployment_overlap_uses_final_updated_states(
             ExistingDeploymentState(
                 deployment_id=42,
                 sensor_id=11,
+                location_id=21,
                 variable_id=31,
                 valid_from=june,
                 valid_to=None,
@@ -2366,7 +2414,7 @@ def test_deployment_overlap_uses_final_updated_states(
             "deployment validity interval "
             "overlaps another planned "
             "deployment for the same "
-            "sensor and variable"
+            "sensor, location, and variable"
         )
     else:
         assert errors == ()
@@ -2395,7 +2443,7 @@ def test_deployment_update_keeps_unchanged_history_checks():
     )
     successor = _deployment_create_item(
         "deployments[0]",
-        location_id=22,
+        location_id=21,
         valid_from=march,
         valid_to=None,
     )
@@ -2404,6 +2452,7 @@ def test_deployment_update_keeps_unchanged_history_checks():
         ExistingDeploymentState(
             deployment_id=41,
             sensor_id=11,
+            location_id=21,
             variable_id=31,
             valid_from=january,
             valid_to=june,
@@ -2411,6 +2460,7 @@ def test_deployment_update_keeps_unchanged_history_checks():
         ExistingDeploymentState(
             deployment_id=42,
             sensor_id=11,
+            location_id=21,
             variable_id=31,
             valid_from=june,
             valid_to=None,
@@ -2429,5 +2479,5 @@ def test_deployment_update_keeps_unchanged_history_checks():
     assert errors[0].message == (
         "deployment validity interval "
         "overlaps an existing deployment "
-        "for the same sensor and variable"
+        "for the same sensor, location, and variable"
     )

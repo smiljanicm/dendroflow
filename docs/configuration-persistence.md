@@ -183,8 +183,9 @@ transaction context and handle failures.
 ## Deployment constraints
 
 PostgreSQL requires `valid_to > valid_from` when an end is present.
-It also prevents overlapping deployment intervals for the same sensor
-and variable, regardless of location.
+It also prevents overlapping deployment intervals for the same sensor,
+location, and variable. A multi-depth sensor can measure the same variable
+at different locations during the same interval.
 
 Intervals are half-open: an interval may end exactly when the next
 begins.
@@ -243,7 +244,7 @@ The execution graph combines three kinds of dependency:
 2. An UPDATE releasing a unique key precedes an operation acquiring
    that previous key.
 3. A deployment UPDATE precedes another operation whose final state
-   overlaps its previous sensor, variable, and interval.
+   overlaps its previous sensor, location, variable, and interval.
 
 Previous constraint values are reconstructed from resolved final values
 and recorded `FieldChange.before` values.
@@ -252,7 +253,7 @@ Unique-key dependencies cover site codes, location types, sensor types,
 variables, manufacturer/model pairs, and sensor-model/serial-number
 pairs. Composite comparisons include unchanged key components.
 
-Deployment comparisons use sensor and variable, regardless of location.
+Deployment comparisons use sensor, location, and variable.
 Intervals are half-open, so adjacent boundaries do not overlap.
 Overlapping final CREATE/UPDATE deployment states are rejected.
 

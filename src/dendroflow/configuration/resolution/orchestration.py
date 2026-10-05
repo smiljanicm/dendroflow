@@ -271,6 +271,7 @@ def _load_existing_deployment_states(
                 ExistingDeploymentState(
                     deployment_id=row.database_id,
                     sensor_id=row.values["sensor_id"],
+                    location_id=row.values["location_id"],
                     variable_id=row.values["variable_id"],
                     valid_from=row.values["valid_from"],
                     valid_to=row.values["valid_to"],
@@ -389,4 +390,3 @@ def resolve_update_config(
         errors=tuple(errors),
         warnings=(),
     )
-

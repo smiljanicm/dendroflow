@@ -1668,6 +1668,7 @@ def resolve_deployment_declarations(
                         ResolvedDeploymentValues,
                     )
                     and item.values.sensor == requested_sensor
+                    and item.values.location == requested_location
                     and item.values.variable == requested_variable
                     and _intervals_overlap(
                         declaration.valid_from,
@@ -1694,14 +1695,16 @@ def resolve_deployment_declarations(
             )
             continue
 
-        # Existing DB history can only exist if sensor and variable
-        # themselves already exist.
+        # Existing DB history can only match when the full exclusion key
+        # (sensor, location, variable) already exists.
         if (
             isinstance(requested_sensor, ExistingRef)
+            and isinstance(requested_location, ExistingRef)
             and isinstance(requested_variable, ExistingRef)
         ):
             history = metadata.find_deployments(
                 sensor_id=requested_sensor.database_id,
+                location_id=requested_location.database_id,
                 variable_id=requested_variable.database_id,
             )
 
@@ -2043,4 +2046,3 @@ def _build_site_values(
         ),
         tuple(errors),
     )
-

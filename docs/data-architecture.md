@@ -399,7 +399,9 @@ A deployment combines:
 sensor + variable + location + validity period
 ```
 
-A multi-channel sensor can therefore have multiple deployments, effectively one deployment per monitored variable/channel.
+A multi-channel sensor can therefore have multiple deployments, including
+the same variable at different locations (for example, the depths measured
+by a single soil-profile probe).
 
 For example:
 
@@ -414,7 +416,9 @@ If the temperature channel fails while humidity continues to operate, the temper
 
 The same physical sensor may also have successive deployments at different locations.
 
-For a given `sensor_id` and `variable_id`, deployment validity periods should not overlap.
+For a given `sensor_id`, `location_id`, and `variable_id`, deployment
+validity periods should not overlap. The same sensor and variable can be
+active at several distinct locations simultaneously.
 
 ---
 
@@ -713,7 +717,7 @@ when an end time is present.
 
 Location labels for the same location must not overlap.
 
-Deployments for the same sensor and variable must not have overlapping validity periods.
+Deployments for the same sensor, location, and variable must not have overlapping validity periods.
 
 ### Controlled identifiers
 

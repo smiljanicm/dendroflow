@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+import pytest
+
 from dendroflow.configuration import ConfigModel, metadata, validate_config
 from dendroflow.configuration.metadata import MetadataRow
 from dendroflow.configuration.plan import (
@@ -2223,7 +2225,7 @@ def test_deployment_overlapping_existing_history_conflicts(
     )
 
     def fake_find_deployments(**kwargs):
-        if "location_id" in kwargs:
+        if "valid_from" in kwargs:
             return ()
 
         return (
@@ -2231,7 +2233,7 @@ def test_deployment_overlapping_existing_history_conflicts(
                 database_id=12,
                 values={
                     "sensor_id": 5,
-                    "location_id": 3,
+                    "location_id": 4,
                     "variable_id": 7,
                     "valid_from": existing_start,
                     "valid_to": None,
@@ -2256,8 +2258,14 @@ def test_deployment_overlapping_existing_history_conflicts(
     assert errors[0].code == PlanErrorCode.CONFLICT
 
 
+@pytest.mark.parametrize(
+    ("second_location", "conflicts"),
+    [("well_01", True), ("well_02", False)],
+)
 def test_deployment_overlapping_planned_deployment_conflicts(
     monkeypatch,
+    second_location,
+    conflicts,
 ):
     config = ConfigModel(
         deployments=[
@@ -2270,7 +2278,7 @@ def test_deployment_overlapping_planned_deployment_conflicts(
             },
             {
                 "sensor": "sensor_01",
-                "location": "well_02",
+                "location": second_location,
                 "variable": "water_level",
                 "valid_from": "2025-06-01T00:00:00Z",
             },
@@ -2325,12 +2333,14 @@ def test_deployment_overlapping_planned_deployment_conflicts(
         existing_bindings,
     )
 
-    assert len(items) == 1
-    assert items[0].action == PlanAction.CREATE
-
-    assert len(errors) == 1
-    assert errors[0].code == PlanErrorCode.CONFLICT
-    assert errors[0].source_path == "deployments[1]"
+    assert len(items) == (1 if conflicts else 2)
+    assert all(item.action == PlanAction.CREATE for item in items)
+    if conflicts:
+        assert len(errors) == 1
+        assert errors[0].code == PlanErrorCode.CONFLICT
+        assert errors[0].source_path == "deployments[1]"
+    else:
+        assert errors == ()
 
 
 def test_new_deployment_with_existing_dependencies_becomes_create(
@@ -3457,6 +3467,3 @@ def test_resolve_metadata_config_existing_resources_are_reused(
         "locations[0].initial_label": PlanAction.REUSE,
         "deployments[0]": PlanAction.REUSE,
     }
-
-
-

@@ -25,6 +25,7 @@ from ..plan import (
 class ExistingDeploymentState:
     deployment_id: int
     sensor_id: int
+    location_id: int
     variable_id: int
     valid_from: datetime
     valid_to: datetime | None
@@ -142,6 +143,8 @@ def _collect_deployment_overlap_errors(
             same_exclusion_key = (
                 previous.values.sensor
                 == item.values.sensor
+                and previous.values.location
+                == item.values.location
                 and previous.values.variable
                 == item.values.variable
             )
@@ -166,7 +169,7 @@ def _collect_deployment_overlap_errors(
                         "deployment validity interval "
                         "overlaps another planned "
                         "deployment for the same "
-                        "sensor and variable"
+                        "sensor, location, and variable"
                     ),
                 )
             )
@@ -208,10 +211,14 @@ def _collect_existing_deployment_overlap_errors(
         )
 
         sensor = item.values.sensor
+        location = item.values.location
         variable = item.values.variable
 
         # Planned resources cannot have persisted deployment history.
         if not isinstance(sensor, ExistingRef):
+            continue
+
+        if not isinstance(location, ExistingRef):
             continue
 
         if not isinstance(variable, ExistingRef):
@@ -225,6 +232,9 @@ def _collect_existing_deployment_overlap_errors(
                 continue
 
             if existing.sensor_id != sensor.database_id:
+                continue
+
+            if existing.location_id != location.database_id:
                 continue
 
             if existing.variable_id != variable.database_id:
@@ -246,7 +256,7 @@ def _collect_existing_deployment_overlap_errors(
                     message=(
                         "deployment validity interval "
                         "overlaps an existing deployment "
-                        "for the same sensor and variable"
+                        "for the same sensor, location, and variable"
                     ),
                 )
             )
@@ -523,4 +533,3 @@ def collect_plan_consistency_errors(
     )
 
     return tuple(errors)
-

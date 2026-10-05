@@ -119,7 +119,7 @@ def test_deployment_closes_before_successor(
         _state(end_month=3),
     )
 
-    successor_state = _state(start_month=3, location_id=22)
+    successor_state = _state(start_month=3)
 
     if successor_action == PlanAction.CREATE:
         successor = _create("successor", successor_state)
@@ -127,7 +127,7 @@ def test_deployment_closes_before_successor(
         successor = _update(
             "successor",
             42,
-            _state(start_month=6, location_id=22),
+            _state(start_month=6),
             successor_state,
         )
 
@@ -217,8 +217,7 @@ def test_deployment_different_exclusion_key_adds_no_dependency(
     assert prepared.execution_items == (independent, closing)
 
 
-@pytest.mark.parametrize("location_id", [21, 22])
-def test_deployment_ordering_rejects_overlapping_final_states(location_id):
+def test_deployment_ordering_rejects_overlapping_final_states():
     closing = _update(
         "closing",
         41,
@@ -227,7 +226,7 @@ def test_deployment_ordering_rejects_overlapping_final_states(location_id):
     )
     successor = _create(
         "successor",
-        _state(start_month=3, location_id=location_id),
+        _state(start_month=3),
     )
 
     with pytest.raises(
@@ -237,6 +236,15 @@ def test_deployment_ordering_rejects_overlapping_final_states(location_id):
         _prepare(successor, closing)
 
     assert caught.value.code == ApplyErrorCode.PLAN_NOT_APPLICABLE
+
+
+def test_deployment_different_locations_need_no_ordering():
+    first = _create("soil_005", _state(location_id=21))
+    second = _create("soil_010", _state(location_id=22))
+
+    prepared = _prepare(first, second)
+
+    assert prepared.execution_items == (first, second)
 
 
 def test_deployment_interval_swap_is_rejected_as_cycle():

@@ -1028,7 +1028,7 @@ def test_resolve_config_checks_persisted_deployment_history(
                 database_id=41,
                 values={
                     "sensor_id": 11,
-                    "location_id": 22,
+                    "location_id": 21,
                     "variable_id": 31,
                     "valid_from": datetime(
                         2025, 1, 1, tzinfo=timezone.utc
@@ -1150,4 +1150,3 @@ def test_resolve_config_deduplicates_deployment_history_lookups(
         }
     ]
     assert plan.errors == ()
-
