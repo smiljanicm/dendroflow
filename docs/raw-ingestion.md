@@ -883,9 +883,8 @@ For each incoming identity:
 | Existing RAW observation | Required result |
 | --- | --- |
 | No observation exists | Insert the observation with the new run and source-line provenance. |
-| Same interface and equal normalized value | Count it as unchanged; do not insert or replace it. Keep its original provenance. |
+| Equal normalized value, including a different interface | Count it as unchanged; do not insert or replace it. Keep its original provenance. |
 | Different value | Report a data conflict with identity, incoming source line, stored value and incoming value; fail the current batch without overwriting the stored value. |
-| Different interface | Report a source-mapping conflict; fail the current batch without changing the stored observation. |
 
 Within one snapshot, repeated identities with equal values and the same
 interface are counted once as an insert or unchanged observation; retain the
@@ -1000,18 +999,23 @@ PostgreSQL interruption/resume tests use a temporary staging directory.
 Every incoming observation is checked against RAW using its full identity:
 `(location_id, variable_id, timestamp)`. Appended snapshots therefore compare
 their full contents with stored observations, including late-arriving older
-timestamps. Equal overlaps from the same interface are left untouched, so
+timestamps. Equal overlaps, including copies from another registered file, are left untouched, so
 their original run and source-line provenance remain intact. Only identities
 not already in RAW are inserted.
 
 Values are compared after normal timestamp and numeric conversion, using exact
 equality. PostgreSQL `NaN` values compare equal to one another. Within a reader
 batch, repeated equal identities from the same interface keep the first source
-line and are written once. A changed value or interface for an existing
-identity, or conflicting repeated identities in one batch, raises an
+line and are written once. A changed value for an existing identity, or
+conflicting repeated identities in one batch, raises an
 `ObservationConflictError`. The conflicting batch is rolled back; stored rows
 are not replaced. Deterministic observation conflicts are not retried as
 transient failures.
+
+An equal copy from another file is counted as unchanged and does not create
+another RAW row. Its file and interface are still recorded in the ingestion
+run targets, but RAW keeps only the provenance of the first inserted copy;
+it does not record every source that contained an equal observation.
 
 The insert and batch completion checkpoint share one transaction. Earlier
 completed batches remain committed if a later batch conflicts. Corrections and
