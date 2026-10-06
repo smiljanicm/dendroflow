@@ -130,21 +130,14 @@ def _validate_existing_observation(
 ) -> None:
     identity = observation_identity(incoming)
     existing_interface_id, existing_value = existing
-    if existing_interface_id != incoming.interface_id:
-        raise ObservationConflictError(
-            "Observation source-mapping conflict: "
-            f"identity={identity}, "
-            f"stored_interface_id={existing_interface_id}, "
-            f"incoming_interface_id={incoming.interface_id}, "
-            f"incoming_source_line={incoming.source_row_number}",
-            source_line=incoming.source_row_number,
-        )
     if not values_equal(float(existing_value), incoming.value):
         raise ObservationConflictError(
             "Observation value conflict: "
             f"identity={identity}, "
             f"stored_value={existing_value!r}, "
             f"incoming_value={incoming.value!r}, "
+            f"stored_interface_id={existing_interface_id}, "
+            f"incoming_interface_id={incoming.interface_id}, "
             f"incoming_source_line={incoming.source_row_number}",
             source_line=incoming.source_row_number,
         )

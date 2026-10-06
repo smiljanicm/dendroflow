@@ -86,6 +86,60 @@ def test_insert_observations_reports_counts_for_committed_work():
     assert counts.repeated_identity_rows == 1
 
 
+def test_equal_cross_file_overlap_keeps_first_provenance_and_inserts_gaps():
+    timestamp = datetime(2026, 3, 19, tzinfo=timezone.utc)
+    later = datetime(2026, 3, 19, 0, 15, tzinfo=timezone.utc)
+    rows = {(3, 1, timestamp): (4, 10.5)}
+
+    class FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+        def execute(self, query, parameters):
+            self.result = None
+            if query.lstrip().startswith("SELECT interface_id, value"):
+                self.result = rows.get(tuple(parameters))
+            elif query.lstrip().startswith("INSERT INTO raw_observations"):
+                identity = tuple(parameters[:3])
+                if identity not in rows:
+                    rows[identity] = (parameters[4], parameters[3])
+                    self.result = (2,)
+
+        def fetchone(self):
+            return self.result
+
+    class FakeConnection:
+        def cursor(self):
+            return FakeCursor()
+
+    def observation(at, value):
+        return NormalizedObservation(
+            location_id=3,
+            variable_id=1,
+            timestamp=at,
+            value=value,
+            interface_id=9,
+            source_row_number=7,
+        )
+
+    counts = insert_raw_observations_with_counts(
+        FakeConnection(), 12,
+        (observation(timestamp, 10.5), observation(later, 11.2)),
+    )
+
+    assert (counts.inserted, counts.unchanged) == (1, 1)
+    assert rows[(3, 1, timestamp)] == (4, 10.5)
+    assert rows[(3, 1, later)] == (9, 11.2)
+
+    with pytest.raises(ObservationConflictError, match="value conflict"):
+        insert_raw_observations_with_counts(
+            FakeConnection(), 12, (observation(timestamp, 10.6),),
+        )
+
+
 def test_report_classifies_a_busy_file_without_reading_it(monkeypatch):
     def busy_lock(file_id):
         raise FileIngestionInProgressError(f"file_id={file_id} is busy")
