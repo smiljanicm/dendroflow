@@ -9,6 +9,7 @@ from dendroflow.ingestion.models import (
     IngestionCounts,
     IngestionError,
     IngestionFileResult,
+    ValueConflictSample,
 )
 from dendroflow.ingestion.service import IngestionProgressEvent
 
@@ -276,6 +277,42 @@ def test_ingest_text_sends_file_diagnostics_to_stderr(
     assert "inserted=4, unchanged=3, repeated=1" in captured.out
     assert "observation_conflict" in captured.err
     assert "batch 2, source line 17" in captured.err
+
+
+def test_ingest_reports_kept_cross_file_value_conflict(
+    cli_target, monkeypatch, capsys,
+):
+    sample = ValueConflictSample(
+        location_id=4, variable_id=1,
+        timestamp="2024-06-18T14:05:00+01:00",
+        stored_value=6721.562, incoming_value=6721.563,
+        stored_interface_id=9, incoming_interface_id=14,
+        incoming_source_line=30533,
+    )
+    result = _result(
+        3, counts=IngestionCounts(
+            source_rows_examined=31000, observations_inserted=250,
+            observations_unchanged=154749, repeated_identity_rows=0,
+            deferred_trailing_bytes=0, value_conflicts=1,
+            conflict_samples=(sample,),
+        ),
+    )
+    monkeypatch.setattr(
+        "dendroflow.cli.ingestion.ingest_file_with_report",
+        lambda file_id, **kwargs: result,
+    )
+
+    assert main(["ingest", "--file-id", "3"]) == 0
+    output = capsys.readouterr().out
+    assert "value_conflicts=1" in output
+    assert "6721.562" in output and "6721.563" in output
+    assert "source line 30533" in output
+
+    assert main(["ingest", "--file-id", "3", "--json"]) == 0
+    document = json.loads(capsys.readouterr().out)
+    counts = document["files"][0]["counts"]
+    assert counts["value_conflicts"] == 1
+    assert counts["conflict_samples"][0]["incoming_source_line"] == 30533
 
 
 def test_ingest_returns_deferred_exit_code_when_no_other_errors(

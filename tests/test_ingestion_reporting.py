@@ -6,9 +6,14 @@ import pytest
 
 from dendroflow.ingestion import FileIngestionInProgressError, SourceFile
 from dendroflow.ingestion.conflicts import ObservationConflictError
-from dendroflow.ingestion.models import NormalizedObservation
+from dendroflow.ingestion.models import (
+    NormalizedObservation,
+    ObservationWriteCounts,
+    ValueConflictSample,
+)
 from dendroflow.ingestion.service import (
     IngestionRetryLimitError,
+    _IngestionProgress,
     ingest_file_with_report,
 )
 from dendroflow.ingestion.snapshots import (
@@ -17,7 +22,10 @@ from dendroflow.ingestion.snapshots import (
 )
 from dendroflow.ingestion.sources import UnknownSourceFileError
 from dendroflow.ingestion.versions import SourceFileRegressionError
-from dendroflow.ingestion.writer import insert_raw_observations_with_counts
+from dendroflow.ingestion.writer import (
+    _report_value,
+    insert_raw_observations_with_counts,
+)
 
 
 def test_insert_observations_reports_counts_for_committed_work():
@@ -89,7 +97,9 @@ def test_insert_observations_reports_counts_for_committed_work():
 def test_equal_cross_file_overlap_keeps_first_provenance_and_inserts_gaps():
     timestamp = datetime(2026, 3, 19, tzinfo=timezone.utc)
     later = datetime(2026, 3, 19, 0, 15, tzinfo=timezone.utc)
+    latest = datetime(2026, 3, 19, 0, 30, tzinfo=timezone.utc)
     rows = {(3, 1, timestamp): (4, 10.5)}
+    audits = []
 
     class FakeCursor:
         def __enter__(self):
@@ -107,6 +117,8 @@ def test_equal_cross_file_overlap_keeps_first_provenance_and_inserts_gaps():
                 if identity not in rows:
                     rows[identity] = (parameters[4], parameters[3])
                     self.result = (2,)
+            elif query.lstrip().startswith("INSERT INTO raw_observation_conflicts"):
+                audits.append(parameters)
 
         def fetchone(self):
             return self.result
@@ -115,13 +127,13 @@ def test_equal_cross_file_overlap_keeps_first_provenance_and_inserts_gaps():
         def cursor(self):
             return FakeCursor()
 
-    def observation(at, value):
+    def observation(at, value, interface_id=9):
         return NormalizedObservation(
             location_id=3,
             variable_id=1,
             timestamp=at,
             value=value,
-            interface_id=9,
+            interface_id=interface_id,
             source_row_number=7,
         )
 
@@ -134,10 +146,47 @@ def test_equal_cross_file_overlap_keeps_first_provenance_and_inserts_gaps():
     assert rows[(3, 1, timestamp)] == (4, 10.5)
     assert rows[(3, 1, later)] == (9, 11.2)
 
+    counts = insert_raw_observations_with_counts(
+        FakeConnection(), 12,
+        (observation(timestamp, 10.6), observation(latest, 11.3)),
+    )
+    assert (counts.inserted, counts.unchanged, counts.value_conflicts) == (1, 0, 1)
+    assert counts.conflict_samples[0].incoming_source_line == 7
+    assert rows[(3, 1, timestamp)] == (4, 10.5)
+    assert rows[(3, 1, latest)] == (9, 11.3)
+    assert audits == [(12, 3, 1, timestamp, 4, 9, 10.5, 10.6, 7)]
+
     with pytest.raises(ObservationConflictError, match="value conflict"):
         insert_raw_observations_with_counts(
-            FakeConnection(), 12, (observation(timestamp, 10.6),),
+            FakeConnection(), 12, (observation(timestamp, 10.6, 4),),
         )
+    assert len(audits) == 1
+
+
+def test_conflict_report_accumulates_all_batches_but_bounds_examples():
+    progress = _IngestionProgress(file_id=3, counts_available=True)
+    for index in range(8):
+        progress.add_batch_counts(ObservationWriteCounts(
+            inserted=1, unchanged=2, repeated_identity_rows=0,
+            value_conflicts=1,
+            conflict_samples=(ValueConflictSample(
+                location_id=4, variable_id=1,
+                timestamp=f"2024-06-18T14:{index:02d}:00+01:00",
+                stored_value=6721.562, incoming_value=6721.563,
+                stored_interface_id=9, incoming_interface_id=14,
+                incoming_source_line=30533 + index,
+            ),),
+        ))
+    result = progress.result("completed")
+    assert result.counts.observations_inserted == 8
+    assert result.counts.observations_unchanged == 16
+    assert result.counts.value_conflicts == 8
+    assert len(result.counts.conflict_samples) == 5
+
+
+def test_nonfinite_conflict_sample_values_are_valid_json_strings():
+    assert _report_value(float("nan")) == "nan"
+    assert _report_value(float("inf")) == "inf"
 
 
 def test_report_classifies_a_busy_file_without_reading_it(monkeypatch):

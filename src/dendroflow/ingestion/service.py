@@ -19,6 +19,7 @@ from .models import (
     IngestionFileResult,
     IngestionRun,
     ObservationWriteCounts,
+    ValueConflictSample,
 )
 from .normalization import normalize_batch
 from .runs import (
@@ -67,6 +68,7 @@ class IngestionProgressEvent:
     source_rows_examined: int = 0
     observations_inserted: int = 0
     observations_unchanged: int = 0
+    value_conflicts: int = 0
 
 
 @dataclass
@@ -83,6 +85,8 @@ class _IngestionProgress:
     observations_inserted: int = 0
     observations_unchanged: int = 0
     repeated_identity_rows: int = 0
+    value_conflicts: int = 0
+    conflict_samples: tuple[ValueConflictSample, ...] = ()
     deferred_trailing_bytes: int | None = None
     current_batch_number: int | None = None
 
@@ -90,6 +94,10 @@ class _IngestionProgress:
         self.observations_inserted += counts.inserted
         self.observations_unchanged += counts.unchanged
         self.repeated_identity_rows += counts.repeated_identity_rows
+        self.value_conflicts += counts.value_conflicts
+        self.conflict_samples = (
+            self.conflict_samples + counts.conflict_samples
+        )[:5]
 
     def result(
         self,
@@ -105,6 +113,8 @@ class _IngestionProgress:
                 observations_unchanged=self.observations_unchanged,
                 repeated_identity_rows=self.repeated_identity_rows,
                 deferred_trailing_bytes=self.deferred_trailing_bytes,
+                value_conflicts=self.value_conflicts,
+                conflict_samples=self.conflict_samples,
             )
         else:
             counts = None
@@ -460,6 +470,7 @@ def _ingest_file(
                             source_rows_examined=progress.source_rows_examined,
                             observations_inserted=progress.observations_inserted,
                             observations_unchanged=progress.observations_unchanged,
+                            value_conflicts=progress.value_conflicts,
                         ))
 
                     break

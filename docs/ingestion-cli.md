@@ -107,11 +107,10 @@ Typical results are:
 - If a competing worker holds the file lock, that file returns `deferred` with
   error category `file_busy`. The command exits `3` if no file failed or needs
   configuration.
-- If an overlapping observation has a different value, that file returns
-  `failed` with error category `observation_conflict`. Earlier committed
-  batches remain counted. The command exits `1`.
-- If one file completes while another conflicts, the report includes both the
-  `completed` and `failed` results, and the command exits `1`.
+- An overlap with a different value from another interface is recorded in
+  `raw_observation_conflicts`, counted in `value_conflicts`, and does not stop
+  ingestion. The original RAW value remains. A changed historical value from
+  the same interface still returns `failed` with `observation_conflict`.
 
 ## Counts and provenance
 
@@ -127,7 +126,23 @@ Counts describe this invocation, not lifetime totals for the file:
 - `observations_inserted`: RAW observations committed by successful batches
   during this invocation.
 - `observations_unchanged`: incoming observations in successful batches that
-  matched an existing RAW identity, interface, and value.
+  matched an existing RAW identity and value, including another interface.
+- `value_conflicts`: differing values from another interface recorded during
+  successful batches. Every discrepancy is stored in RAW's
+  `raw_observation_conflicts` table. `conflict_samples` contains at most five
+  examples; use the run ID to inspect all audit rows.
+
+For example, replace `12345` with the reported run ID to inspect every
+recorded difference in RAW:
+
+```sql
+SELECT location_id, variable_id, timestamp,
+       stored_interface_id, stored_value,
+       incoming_interface_id, incoming_value, incoming_source_row_number
+FROM raw_observation_conflicts
+WHERE ingestion_run_id = 12345
+ORDER BY timestamp, incoming_source_row_number;
+```
 - `repeated_identity_rows`: extra rows within a reader batch that repeated the
   same observation identity, interface, and value and were deduplicated.
 - `deferred_trailing_bytes`: bytes omitted because the captured source ended
@@ -215,7 +230,9 @@ Example:
         "observations_inserted": 40,
         "observations_unchanged": 200,
         "repeated_identity_rows": 0,
-        "deferred_trailing_bytes": 0
+        "deferred_trailing_bytes": 0,
+        "value_conflicts": 0,
+        "conflict_samples": []
       },
       "error": null
     }

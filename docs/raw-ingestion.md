@@ -884,7 +884,8 @@ For each incoming identity:
 | --- | --- |
 | No observation exists | Insert the observation with the new run and source-line provenance. |
 | Equal normalized value, including a different interface | Count it as unchanged; do not insert or replace it. Keep its original provenance. |
-| Different value | Report a data conflict with identity, incoming source line, stored value and incoming value; fail the current batch without overwriting the stored value. |
+| Different value from another interface | Keep the first RAW value; record both values and interfaces in `raw_observation_conflicts`, count the conflict, and continue through the file. No numeric tolerance is assumed. |
+| Different value from the same interface | Fail the current batch; a changed historical value from the same source requires review. |
 
 Within one snapshot, repeated identities with equal values and the same
 interface are counted once as an insert or unchanged observation; retain the
@@ -892,7 +893,8 @@ first physical source line and report the repeated rows. Repeated identities
 with conflicting values or interfaces fail the batch as data conflicts.
 
 All inserts and the batch completion checkpoint remain one transaction. If a
-batch contains a conflict, none of that batch's inserts or checkpoint changes
+batch contains a same-interface or in-batch conflict, none of that batch's
+inserts or checkpoint changes
 commit. Earlier completed batches remain committed and visible. A retry must
 not turn a deterministic conflict into a successful write; conflicts require
 review and a new ingestion request after the source or configuration is
@@ -1006,11 +1008,18 @@ not already in RAW are inserted.
 Values are compared after normal timestamp and numeric conversion, using exact
 equality. PostgreSQL `NaN` values compare equal to one another. Within a reader
 batch, repeated equal identities from the same interface keep the first source
-line and are written once. A changed value for an existing identity, or
-conflicting repeated identities in one batch, raises an
-`ObservationConflictError`. The conflicting batch is rolled back; stored rows
-are not replaced. Deterministic observation conflicts are not retried as
-transient failures.
+line and are written once. A different value from another interface keeps the
+first RAW value, records both values and source context in
+`raw_observation_conflicts`, and counts it separately from equal overlaps.
+Every such discrepancy is persisted in the same transaction as the batch
+checkpoint. The report shows the total and up to five examples; query the
+audit table by `ingestion_run_id` to inspect the remainder. No tolerance is
+used: even a difference in the last decimal place is recorded.
+
+A changed value from the same interface, or conflicting repeated identities in
+one batch, raises an `ObservationConflictError`. The conflicting batch is
+rolled back; stored rows are not replaced. Deterministic observation conflicts
+are not retried as transient failures.
 
 An equal copy from another file is counted as unchanged and does not create
 another RAW row. Its file and interface are still recorded in the ingestion

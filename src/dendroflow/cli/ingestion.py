@@ -102,7 +102,8 @@ class _ProgressDisplay:
                     f"File {self.file_id}: {label} {event.batch_number}; "
                     f"rows examined={event.source_rows_examined}; "
                     f"inserted={event.observations_inserted}, "
-                    f"unchanged={event.observations_unchanged}",
+                    f"unchanged={event.observations_unchanged}, "
+                    f"value_conflicts={event.value_conflicts}",
                     file=sys.stderr,
                     flush=True,
                 )
@@ -173,8 +174,25 @@ def _format_text(
                 "  Observations: "
                 f"inserted={counts.observations_inserted}, "
                 f"unchanged={counts.observations_unchanged}, "
-                f"repeated={counts.repeated_identity_rows}"
+                f"repeated={counts.repeated_identity_rows}, "
+                f"value_conflicts={counts.value_conflicts}"
             )
+            for sample in counts.conflict_samples:
+                lines.append(
+                    "  Value conflict kept: "
+                    f"location={sample.location_id}, variable={sample.variable_id}, "
+                    f"timestamp={sample.timestamp}, "
+                    f"stored={sample.stored_value} "
+                    f"(interface {sample.stored_interface_id}), "
+                    f"incoming={sample.incoming_value} "
+                    f"(interface {sample.incoming_interface_id}, "
+                    f"source line {sample.incoming_source_line})"
+                )
+            if counts.value_conflicts > len(counts.conflict_samples):
+                lines.append(
+                    "  Additional value conflicts recorded: "
+                    f"{counts.value_conflicts - len(counts.conflict_samples)}"
+                )
             if counts.deferred_trailing_bytes is not None:
                 lines.append(
                     "  Deferred trailing bytes: "

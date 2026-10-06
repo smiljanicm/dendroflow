@@ -86,6 +86,22 @@ class ObservationWriteCounts:
     inserted: int
     unchanged: int
     repeated_identity_rows: int
+    value_conflicts: int = 0
+    conflict_samples: tuple["ValueConflictSample", ...] = ()
+
+
+@dataclass(frozen=True)
+class ValueConflictSample:
+    """A recorded differing overlap shown in the ingestion report."""
+
+    location_id: int
+    variable_id: int
+    timestamp: str
+    stored_value: float | str
+    incoming_value: float | str
+    stored_interface_id: int
+    incoming_interface_id: int
+    incoming_source_line: int
 
 
 @dataclass(frozen=True)
@@ -97,6 +113,8 @@ class IngestionCounts:
     observations_unchanged: int | None
     repeated_identity_rows: int | None
     deferred_trailing_bytes: int | None
+    value_conflicts: int = 0
+    conflict_samples: tuple[ValueConflictSample, ...] = ()
 
 
 @dataclass(frozen=True)
