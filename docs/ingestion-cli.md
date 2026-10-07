@@ -36,6 +36,20 @@ to `3`:
 dendroflow ingest --file-id 12 --max-attempts 5
 ```
 
+By default, a staged snapshot is removed once ingestion completes, including
+an unchanged replay. Use `--keep-snapshot` to retain the exact staged bytes:
+
+```bash
+dendroflow ingest --file-id 12 --keep-snapshot
+```
+
+Snapshots required by running or failed runs are retained. The database keeps
+file-version hashes and observation provenance, but cannot reconstruct source
+bytes from a hash. Keep historical source versions in separate backups if
+byte-level provenance is required. Cleanup failure produces a warning without
+changing a completed run's outcome. Previously retained snapshots are not
+cleaned up by this option.
+
 This command writes RAW data by design. It has no preview or confirmation
 prompt; the selected IDs (or `--all`) are the operator's explicit request to
 ingest.

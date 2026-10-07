@@ -274,7 +274,9 @@ def test_backup_restore_all_databases_and_file_assets(tmp_path, monkeypatch, cap
             encoding="utf-8",
         )
         _assert_cli(capsys, "config", "apply", str(config_path), "--yes")
-        first = json.loads(_assert_cli(capsys, "ingest", "--all", "--json"))
+        first = json.loads(_assert_cli(
+            capsys, "ingest", "--all", "--json", "--keep-snapshot"
+        ))
         assert first["files"][0]["outcome"] == "completed"
 
         initial = _state()

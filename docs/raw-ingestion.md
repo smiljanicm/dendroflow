@@ -992,6 +992,24 @@ associated with its file version. Automatic garbage collection is not part of
 GF2; operators must provision and monitor the staging volume. A future cleanup
 task must preserve snapshots referenced by any running or resumable run.
 
+### Completed-snapshot cleanup
+
+Ingestion removes a staged snapshot after its run has completed by default. An
+unchanged replay also removes its re-captured snapshot. Pass `--keep-snapshot`
+to `dendroflow ingest` (or `keep_snapshot=True` to the Python API) when exact
+staged bytes should be retained. The database keeps file-version hashes,
+run records, observations, and provenance; it does not retain the source bytes.
+Snapshots referenced by running or failed runs are retained. If deletion
+fails, ingestion remains successful and emits a warning; monitor snapshot
+volume usage. This does not clean up snapshots created by earlier releases or
+left by a process killed between database commit and deletion.
+
+Use the default only if exact historical source bytes are available from separate
+backups or their loss is acceptable. Without a retained snapshot, an old file
+version cannot be replayed from its hash alone. Coordinate ingestion and
+backup with the same host lock so cleanup cannot run while a snapshot backup
+is being captured.
+
 Unit tests cover content hashing, content-addressed reuse, incomplete trailing
 lines, empty snapshots, and source changes during capture. The existing
 PostgreSQL interruption/resume tests use a temporary staging directory.

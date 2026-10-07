@@ -10,6 +10,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from dendroflow.database import connect
+
 from .models import FileFingerprint
 
 COPY_CHUNK_SIZE = 1024 * 1024
@@ -134,6 +136,39 @@ def file_settle_seconds() -> float:
             "DENDROFLOW_FILE_SETTLE_SECONDS must be a non-negative number"
         )
     return seconds
+
+
+def cleanup_completed_snapshot(file_id: int, file_hash: str, path: Path) -> bool:
+    """Remove a completed snapshot only when no unfinished run needs its bytes.
+
+    A failed run is retained for diagnosis, and a running run must keep its
+    exact bytes for resume. The caller holds the per-file lock.
+    """
+    digest = file_hash.removeprefix("sha256:")
+    expected = snapshot_directory() / str(file_id) / f"{digest}.snapshot"
+    if (path != expected or not file_hash.startswith("sha256:")
+            or len(digest) != 64
+            or any(c not in "0123456789abcdef" for c in digest)):
+        raise ValueError("Refusing to delete a snapshot at an unexpected path")
+
+    with connect("dendroflow_raw") as connection:
+        unfinished = connection.execute(
+            """
+            SELECT EXISTS (
+                SELECT 1 FROM ingestion_targets AS targets
+                JOIN ingestion_runs AS runs USING (ingestion_run_id)
+                JOIN file_versions AS versions USING (file_version_id)
+                WHERE versions.file_id = %s
+                  AND versions.file_hash = %s
+                  AND runs.status <> 'completed'
+            )
+            """,
+            (file_id, file_hash),
+        ).fetchone()[0]
+    if unfinished:
+        return False
+    path.unlink(missing_ok=True)
+    return True
 
 
 def _signature(stat_result: os.stat_result) -> tuple[int, int, int, int, int]:

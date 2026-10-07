@@ -36,6 +36,12 @@ def no_running_or_completed_file_versions(monkeypatch):
         "dendroflow.ingestion.service.get_latest_completed_file_size",
         lambda file_id: None,
     )
+    # Most service tests use a synthetic snapshot path and hash. File deletion
+    # and path validation are covered by test_snapshot_cleanup.py.
+    monkeypatch.setattr(
+        "dendroflow.ingestion.service.cleanup_completed_snapshot",
+        lambda file_id, file_hash, path: False,
+    )
 
 
 def fake_snapshot(path, file_id):
@@ -117,6 +123,11 @@ def test_insert_raw_observations():
 
 
 def test_ingest_file(monkeypatch, tmp_path):
+    cleanup_calls = []
+    monkeypatch.setattr(
+        "dendroflow.ingestion.service._cleanup_after_success",
+        lambda snapshot, file_id: cleanup_calls.append(file_id),
+    )
     source_file = SourceFile(
         file_id=1,
         filepath=tmp_path / "example.csv",
@@ -336,6 +347,15 @@ def test_ingest_file(monkeypatch, tmp_path):
     assert replay.outcome == "already_completed"
     assert replay.ingestion_run_id == 7
     assert replay.counts is None
+    assert cleanup_calls == [1, 1, 1]
+
+    kept = ingest_file_with_report(1, keep_snapshot=True)
+    assert kept.outcome == "already_completed"
+    assert cleanup_calls == [1, 1, 1]
+
+    completed_run_lookup["run"] = None
+    assert ingest_file(1, keep_snapshot=True).status == "completed"
+    assert cleanup_calls == [1, 1, 1]
 
 def test_ingest_file_retries_failed_batch(
     monkeypatch,

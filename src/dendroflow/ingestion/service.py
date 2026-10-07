@@ -1,3 +1,4 @@
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -35,6 +36,7 @@ from .snapshots import (
     SourceFileChangingError,
     SourceSnapshotUnavailableError,
     capture_source_snapshot,
+    cleanup_completed_snapshot,
     load_source_snapshot,
 )
 from .sources import (
@@ -55,6 +57,18 @@ from .writer import write_ingestion_batch, write_ingestion_batch_with_counts
 
 class IngestionRetryLimitError(RuntimeError):
     """Raised when a batch has exhausted its configured attempts."""
+
+
+def _cleanup_after_success(snapshot, file_id: int) -> None:
+    # Database completion is already committed. A cleanup failure must not
+    # misreport successful ingestion as failed or trigger a duplicate retry.
+    try:
+        cleanup_completed_snapshot(
+            file_id, snapshot.fingerprint.file_hash, snapshot.snapshot_path
+        )
+    except Exception as error:  # noqa: BLE001
+        warnings.warn(f"Snapshot cleanup failed for file_id={file_id}: {error}",
+                      RuntimeWarning, stacklevel=2)
 
 
 @dataclass(frozen=True)
@@ -167,6 +181,7 @@ def ingest_file(
     file_id: int,
     *,
     max_attempts: int = 3,
+    keep_snapshot: bool = False,
 ) -> IngestionRun:
     """Ingest one registered source file into RAW."""
 
@@ -174,13 +189,16 @@ def ingest_file(
         raise ValueError("max_attempts must be at least 1")
 
     with file_ingestion_lock(file_id):
-        return _ingest_file(file_id, max_attempts=max_attempts)
+        return _ingest_file(
+            file_id, max_attempts=max_attempts, keep_snapshot=keep_snapshot
+        )
 
 
 def ingest_file_with_report(
     file_id: int,
     *,
     max_attempts: int = 3,
+    keep_snapshot: bool = False,
     on_progress: Callable[[IngestionProgressEvent], None] | None = None,
 ) -> IngestionFileResult:
     """Ingest one file and report the outcome and work from this invocation."""
@@ -194,6 +212,7 @@ def ingest_file_with_report(
             run = _ingest_file(
                 file_id,
                 max_attempts=max_attempts,
+                keep_snapshot=keep_snapshot,
                 progress=progress,
                 on_progress=on_progress,
             )
@@ -215,6 +234,7 @@ def _ingest_file(
     file_id: int,
     *,
     max_attempts: int,
+    keep_snapshot: bool = False,
     progress: _IngestionProgress | None = None,
     on_progress: Callable[[IngestionProgressEvent], None] | None = None,
 ) -> IngestionRun:
@@ -312,6 +332,8 @@ def _ingest_file(
             if progress is not None:
                 progress.already_completed = True
                 progress.ingestion_run_id = completed_run.ingestion_run_id
+            if not keep_snapshot:
+                _cleanup_after_success(snapshot, file_id)
             return completed_run
 
     ingested_interface_ids = get_ingested_interface_ids(
@@ -487,11 +509,14 @@ def _ingest_file(
                     ):
                         raise
 
-        return finalize_ingestion_run(
+        completed_run = finalize_ingestion_run(
             ingestion_run_id=run.ingestion_run_id,
             file_version_id=file_version.file_version_id,
             interfaces=interfaces,
         )
+        if not keep_snapshot:
+            _cleanup_after_success(snapshot, file_id)
+        return completed_run
 
     except Exception:
         try:

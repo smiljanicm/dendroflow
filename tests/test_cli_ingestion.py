@@ -63,6 +63,21 @@ def test_ingest_help_documents_selection_modes(capsys):
     assert "--max-attempts N" in output
     assert "--json" in output
     assert "--progress" in output
+    assert "--keep-snapshot" in output
+
+
+def test_ingest_passes_keep_snapshot_option(cli_target, monkeypatch, capsys):
+    calls = []
+
+    def fake_ingest(file_id, *, max_attempts, keep_snapshot):
+        calls.append((file_id, keep_snapshot))
+        return _result(file_id)
+
+    monkeypatch.setattr(
+        "dendroflow.cli.ingestion.ingest_file_with_report", fake_ingest,
+    )
+    assert main(["ingest", "--file-id", "1", "--json", "--keep-snapshot"]) == 0
+    assert calls == [(1, True)]
 
 
 @pytest.mark.parametrize(

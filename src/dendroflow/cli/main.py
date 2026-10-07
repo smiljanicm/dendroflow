@@ -93,6 +93,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Show live progress on standard error (also with --json).",
     )
+    ingestion_parser.add_argument(
+        "--keep-snapshot", "--keep_snapshot",
+        action="store_true",
+        help="Retain staged source snapshots after successful ingestion.",
+    )
     ingestion_parser.set_defaults(handler=ingestion_cli.ingest)
 
     discovery_parser = commands.add_parser(

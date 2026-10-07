@@ -256,6 +256,7 @@ def ingest(args: argparse.Namespace) -> int:
         file_ids = sorted(requested_ids)
 
     results: list[IngestionFileResult] = []
+    snapshot_option = {"keep_snapshot": True} if args.keep_snapshot else {}
     try:
         with use_database_target(target):
             for file_id in file_ids:
@@ -268,12 +269,14 @@ def ingest(args: argparse.Namespace) -> int:
                     if display is None:
                         result = ingest_file_with_report(
                             file_id, max_attempts=args.max_attempts,
+                            **snapshot_option,
                         )
                     else:
                         result = ingest_file_with_report(
                             file_id,
                             max_attempts=args.max_attempts,
                             on_progress=display,
+                            **snapshot_option,
                         )
                     results.append(result)
     except KeyboardInterrupt:
