@@ -25,6 +25,8 @@ dendroflow discover --root /data/logger
 dendroflow discover --root /data/logger --recursive --include '*.csv'
 dendroflow discover --root /data/logger --root /data/archive \
   --recursive --include '*.csv' --exclude 'temporary/**' --json
+dendroflow discover --root /data/logger --include 'PRO_*' \
+  --workbook-csv /work/pro_files.csv
 ```
 
 Options:
@@ -39,6 +41,21 @@ Options:
 - `--exclude GLOB`: exclude paths matching a shell-style glob relative to a
   scan root. May be repeated. Exclusions take precedence over inclusions.
 - `--json`: emit one machine-readable JSON report to standard output.
+- `--workbook-csv PATH`: create a CSV with new rows for the workbook `files`
+  sheet. This can be combined with `--json`; the JSON remains on standard
+  output. The output path must not already exist, and its parent directory
+  must exist. In Compose, use a path under `/work` to make it available in the
+  host repository.
+
+The workbook CSV contains only `unregistered` paths and uses the exact `files`
+sheet columns: `file_id`, `ref`, `row_role`, `path`, `timestamp_timezone`,
+`timestamp_format`, `reader_type`, and `reader_options`. New rows have a blank
+ID, a stable path-derived `ref`, `edit` role, and `csv` reader type. Fill in the
+timezone, timestamp format, and reader options after reviewing each source;
+discovery cannot infer them. Verify that each generated `ref` is unique in the
+destination workbook. Registered and `needs_configuration` paths are not
+exported as new rows. A scan with unreadable paths produces no workbook CSV
+because its inventory is incomplete.
 
 The command reads registrations from the currently selected DendroFlow
 database target, which defaults to `local`, using the same target settings as

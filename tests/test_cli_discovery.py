@@ -1,3 +1,4 @@
+import csv
 import json
 from contextlib import nullcontext
 from pathlib import Path
@@ -38,6 +39,74 @@ def test_discover_help_documents_scope_filters_and_json(capsys):
     assert "--include GLOB" in output
     assert "--exclude GLOB" in output
     assert "--json" in output
+    assert "--workbook-csv PATH" in output
+
+
+def test_discover_writes_new_workbook_file_rows(
+    tmp_path, discovery_target, monkeypatch, capsys,
+):
+    root = tmp_path / "sources"
+    root.mkdir()
+    new_path = root / "new,one.csv"
+    new_path.write_text("data", encoding="utf-8")
+    known_path = root / "known.csv"
+    known_path.write_text("data", encoding="utf-8")
+    monkeypatch.setattr(
+        "dendroflow.cli.discovery.get_registered_files",
+        lambda: (RegisteredFile(8, str(known_path), 1),),
+    )
+    output = tmp_path / "files.csv"
+
+    assert main([
+        "discover", "--root", str(root), "--workbook-csv", str(output),
+        "--json",
+    ]) == 1
+
+    with output.open(newline="", encoding="utf-8") as source:
+        rows = list(csv.DictReader(source))
+    assert len(rows) == 1
+    assert rows[0]["file_id"] == ""
+    assert rows[0]["ref"].startswith("new_file_")
+    assert rows[0]["row_role"] == "edit"
+    assert rows[0]["path"] == str(new_path)
+    assert rows[0]["timestamp_timezone"] == ""
+    assert rows[0]["timestamp_format"] == ""
+    assert rows[0]["reader_type"] == "csv"
+    assert rows[0]["reader_options"] == ""
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["summary"]["unregistered"] == 1
+    assert "Wrote 1 new file row" in captured.err
+
+    # Existing output is preserved on a repeat run.
+    assert main([
+        "discover", "--root", str(root), "--workbook-csv", str(output),
+    ]) == 2
+    assert output.exists()
+
+
+def test_incomplete_discovery_does_not_write_workbook_csv(
+    tmp_path, discovery_target, monkeypatch, capsys,
+):
+    from dendroflow.discovery import scanner
+
+    root = tmp_path / "sources"
+    (root / "blocked").mkdir(parents=True)
+    (root / "new.csv").write_text("data", encoding="utf-8")
+    original_scandir = scanner.os.scandir
+
+    def fail_for_blocked(path):
+        if Path(path) == root / "blocked":
+            raise PermissionError("access denied")
+        return original_scandir(path)
+
+    monkeypatch.setattr(scanner.os, "scandir", fail_for_blocked)
+    output = tmp_path / "files.csv"
+    assert main([
+        "discover", "--root", str(root), "--recursive",
+        "--workbook-csv", str(output),
+    ]) == 3
+    assert not output.exists()
+    assert "scan is incomplete" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(

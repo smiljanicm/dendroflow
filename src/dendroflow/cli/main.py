@@ -137,6 +137,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Write one machine-readable JSON report to standard output.",
     )
+    discovery_parser.add_argument(
+        "--workbook-csv",
+        type=Path,
+        metavar="PATH",
+        help="Write new file rows for the workbook files sheet to a new CSV.",
+    )
     discovery_parser.set_defaults(handler=discovery_cli.discover)
 
     config_parser = commands.add_parser(

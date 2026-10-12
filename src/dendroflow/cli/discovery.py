@@ -1,8 +1,11 @@
 """Read-only file discovery command-line interface."""
 
 import argparse
+import csv
+import hashlib
 import json
 import sys
+from pathlib import Path
 
 import psycopg
 
@@ -20,6 +23,38 @@ from dendroflow.discovery import (
 ACTIONABLE_STATES = frozenset(
     {"unregistered", "needs_configuration", "missing"},
 )
+
+WORKBOOK_FILE_COLUMNS = (
+    "file_id", "ref", "row_role", "path", "timestamp_timezone",
+    "timestamp_format", "reader_type", "reader_options",
+)
+
+
+def _write_workbook_csv(path: Path, comparison: DiscoveryComparison) -> int:
+    """Write only unregistered paths as new workbook file rows."""
+    new_files = sorted(
+        (item for item in comparison.files if item.state == "unregistered"),
+        key=lambda item: str(item.path),
+    )
+    created = False
+    try:
+        with path.open("x", newline="", encoding="utf-8") as output:
+            created = True
+            writer = csv.writer(output)
+            writer.writerow(WORKBOOK_FILE_COLUMNS)
+            for item in new_files:
+                source_path = str(item.path)
+                ref = "new_file_" + hashlib.sha256(
+                    source_path.encode("utf-8")
+                ).hexdigest()[:16]
+                writer.writerow(("", ref, "edit", source_path, "", "", "csv", ""))
+    except Exception:
+        # Do not leave a partial CSV after a write failure. An existing file
+        # must remain untouched when exclusive creation failed.
+        if created:
+            path.unlink(missing_ok=True)
+        raise
+    return len(new_files)
 
 
 def _summary(comparison: DiscoveryComparison) -> dict[str, int]:
@@ -135,9 +170,29 @@ def discover(args: argparse.Namespace) -> int:
         print(f"Discovery comparison failed: {error}", file=sys.stderr)
         return 2
 
+    csv_error_code = None
+    if args.workbook_csv is not None:
+        if not comparison.complete:
+            print(
+                "Workbook CSV was not written: discovery scan is incomplete.",
+                file=sys.stderr,
+            )
+            csv_error_code = 3
+        else:
+            try:
+                count = _write_workbook_csv(args.workbook_csv, comparison)
+            except (OSError, ValueError) as error:
+                print(f"Unable to write workbook CSV: {error}", file=sys.stderr)
+                csv_error_code = 2
+            else:
+                print(
+                    f"Wrote {count} new file row(s) to {args.workbook_csv}",
+                    file=sys.stderr,
+                )
+
     if args.json:
         print(json.dumps(_report_document(comparison, target.environment), indent=2))
     else:
         print(_format_text(comparison, target.environment))
 
-    return _exit_code(comparison)
+    return csv_error_code if csv_error_code is not None else _exit_code(comparison)
