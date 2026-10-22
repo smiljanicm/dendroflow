@@ -79,7 +79,6 @@ jobs:
       DENDROFLOW_INTEGRATION: "1"
       DENDROFLOW_FRESH_MIGRATION: "1"
       DENDROFLOW_RECOVERY_DRILL: "0"
-      DENDROFLOW_SNAPSHOT_DIR: ${{ runner.temp }}/dendroflow-snapshots
 
     steps:
       - name: Check out repository
@@ -110,7 +109,9 @@ jobs:
         run: dendroflow migrate
 
       - name: Prepare snapshot directory
-        run: mkdir -p "$DENDROFLOW_SNAPSHOT_DIR"
+        run: |
+          mkdir -p "$RUNNER_TEMP/dendroflow-snapshots"
+          echo "DENDROFLOW_SNAPSHOT_DIR=$RUNNER_TEMP/dendroflow-snapshots" >> "$GITHUB_ENV"
 
       - name: Run PostgreSQL integration tests
         run: python -m pytest tests/integration -m integration -ra
