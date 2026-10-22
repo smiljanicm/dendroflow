@@ -48,6 +48,80 @@ jobs:
           DENDROFLOW_PACKAGE_SMOKE: "1"
         run: python -m pytest tests/test_installed_wheel.py -v
 
+  postgres-integration:
+    name: PostgreSQL integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # A fresh PostgreSQL instance for this job only.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: dendroflow_test
+          POSTGRES_PASSWORD: ci-test-only
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dendroflow_test -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    # Connection settings used by DendroFlow and its tests.
+    env:
+      POSTGRES_HOST: "127.0.0.1"
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: dendroflow_test
+      POSTGRES_PASSWORD: ci-test-only
+      DENDROFLOW_ENVIRONMENT: local
+      DENDROFLOW_INTEGRATION: "1"
+      DENDROFLOW_FRESH_MIGRATION: "1"
+      DENDROFLOW_RECOVERY_DRILL: "0"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install DendroFlow and development dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Create DendroFlow databases
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          docker exec -i "$POSTGRES_CONTAINER" \
+            psql -U "$POSTGRES_USER" -d postgres \
+            -v ON_ERROR_STOP=1 \
+            < docker/postgres/init/01-create-databases.sql
+
+      - name: Apply database migrations
+        run: dendroflow migrate
+
+      - name: Prepare snapshot directory
+        run: |
+          mkdir -p "$RUNNER_TEMP/dendroflow-snapshots"
+          echo "DENDROFLOW_SNAPSHOT_DIR=$RUNNER_TEMP/dendroflow-snapshots" >> "$GITHUB_ENV"
+
+      - name: Run PostgreSQL integration tests
+        run: python -m pytest tests/integration -m integration -ra
+
+      - name: Show PostgreSQL logs on failure
+        if: failure()
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: docker logs "$POSTGRES_CONTAINER"
+
   docker:
     name: Docker build and CLI smoke test
     runs-on: ubuntu-latest
