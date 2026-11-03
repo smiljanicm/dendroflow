@@ -143,3 +143,6 @@ jobs:
 
       - name: Check that the container CLI starts
         run: docker run --rm dendroflow:ci dendroflow --help
+
+      - name: Test Docker quickstart ingestion
+        run: bash scripts/ci/docker-quickstart.sh dendroflow:ci
