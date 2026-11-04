@@ -1,0 +1,75 @@
+name: DendroFlow release
+
+on:
+  workflow_dispatch: {}  # Rehearse the build and quickstart without publishing.
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate release tag and commit
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::Expected a stable release tag such as v0.1.0"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::Tag a commit that has been merged into main"
+            exit 1
+          fi
+
+      - name: Build release candidate
+        run: |
+          docker build -f docker/app/Dockerfile -t dendroflow:candidate \
+            --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.revision=$(git rev-parse HEAD)" .
+
+      - name: Check tag matches installed DendroFlow version
+        if: github.event_name == 'push'
+        run: |
+          version=$(docker run --rm dendroflow:candidate python -c \
+            'from importlib.metadata import version; print(version("dendroflow"))')
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Image contains DendroFlow $version but tag is $GITHUB_REF_NAME"
+            exit 1
+          fi
+
+      - name: Test release candidate with the Docker quickstart
+        run: bash scripts/ci/docker-quickstart.sh dendroflow:candidate
+
+      - name: Publish tested image and record digest
+        if: github.event_name == 'push'
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repository="ghcr.io/${GITHUB_REPOSITORY,,}"
+          image="$repository:$GITHUB_REF_NAME"
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker tag dendroflow:candidate "$image"
+          docker push "$image"
+          digest=$(docker buildx imagetools inspect "$image" --format '{{.Manifest.Digest}}')
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          {
+            echo "Published: \`$image\`"
+            echo
+            echo "Deploy: \`$repository@$digest\`"
+            echo
+            echo "Source commit: \`$(git rev-parse HEAD)\`"
+          } >> "$GITHUB_STEP_SUMMARY"
